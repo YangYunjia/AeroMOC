@@ -7,18 +7,29 @@ YangYunjia, 2023.1.3
 import math
 import copy
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 GEOM = 0
 BIG_NUMBER = 100000.
 
+class ExtrapolateError(Exception):
+    pass
 
 class Node():
 
-    def __init__(self) -> None:
-        self.cors   = np.ones(4) * (-BIG_NUMBER)   # x, y
+    def __init__(self, *value) -> None:
+        self.cors   = np.ones(2) * (-BIG_NUMBER)   # x, y
         self.vals   = np.array([-1.0, -1.0, -1.0, BIG_NUMBER])  # rho, p, vel, tta
+        
+        if len(value) in [2, 6]:
+            self.cors = np.array(value[:2])
+        if len(value) == 6:
+            self.vals = np.array(value[2:6])
+
         self.g      = 1.4
+
+    def __repr__(self) -> str:
+        return '(%.2f, %.2f) (%.2f, %.2f %.2f, %.2f)' % tuple(list(self.cors) + list(self.vals))
 
     @property
     def x(self) -> float:
@@ -119,6 +130,8 @@ class Node():
         '''
         calculate S plus(left) term in Mo's paper (3-24)
         '''
+        if self.y == 0.:
+            return 0.
         return GEOM * math.sin(self.tta) / (self.y * self.ma * math.cos(self.tta + self.alp))
 
     @property
@@ -126,6 +139,8 @@ class Node():
         '''
         calculate S minus(right) term in Mo's paper (3-24)
         '''
+        if self.y == 0.:
+            return 0.
         return GEOM * math.sin(self.tta) / (self.y * self.ma * math.cos(self.tta - self.alp))
 
     @property
@@ -151,7 +166,7 @@ def _calc_p4_vals(_p1: Node, _p2: Node, _p4: Node) -> bool:
     _p3 = Node()
 
     T_plus  = _p2.Q * _p2.p + _p2.tta - _p2.S_plus  * (_p4.x - _p2.x)
-    T_minus = _p1.Q * _p1.p + _p1.tta - _p1.S_minus * (_p4.x - _p1.x)
+    T_minus = _p1.Q * _p1.p - _p1.tta - _p1.S_minus * (_p4.x - _p1.x)
     _p4.p = (T_plus + T_minus) / (_p1.Q + _p2.Q)
     _p4.tta = T_plus - _p2.Q * _p4.p
 
@@ -168,8 +183,8 @@ def _calc_p4_vals(_p1: Node, _p2: Node, _p4: Node) -> bool:
 def _calc_boundary_p4_vals(_p3: Node, _p4: Node, _p1: Node = None, _p2: Node = None) -> bool:
     
     if _p1 is not None:
-        T_minus = _p1.Q * _p1.p + _p1.tta - _p1.S_minus * (_p4.x - _p1.x)
-        _p4.p = (T_minus - _p4.tta) / _p1.Q
+        T_minus = _p1.Q * _p1.p - _p1.tta - _p1.S_minus * (_p4.x - _p1.x)
+        _p4.p = (T_minus + _p4.tta) / _p1.Q
     elif _p2 is not None:
         T_plus  = _p2.Q * _p2.p + _p2.tta - _p2.S_plus  * (_p4.x - _p2.x)
         _p4.p = (T_plus  - _p4.tta) / _p2.Q
@@ -181,10 +196,11 @@ def _calc_boundary_p4_vals(_p3: Node, _p4: Node, _p1: Node = None, _p2: Node = N
 
     return True
 
-def calc_interior_point(p1: Node, p2: Node, p4: Node) -> bool:
+def calc_interior_point(p1: Node, p2: Node) -> Node:
     '''
     
     '''
+    p4  = Node()
     _p1 = copy.deepcopy(p1)
     _p2 = copy.deepcopy(p2)
 
@@ -197,31 +213,39 @@ def calc_interior_point(p1: Node, p2: Node, p4: Node) -> bool:
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
     _calc_p4_vals(_p1, _p2, p4)
 
-    return True
+    return p4
 
-def calc_wall_point(p3: Node, p4: Node, p5: Node) -> bool:
+def calc_wall_point(xx: float, yy: float, dydx: float, p3: Node, p5: Node):
     
+    p4  =  Node(xx, yy)
+    p4.tta = math.atan(dydx)
+
     _p5 = copy.deepcopy(p5)
     _p3 = copy.deepcopy(p3)
 
-    _p2 = Node()
+    p2 = Node()
 
     ratio = 0.5
     ratio_old = 0.0
     # decide the point2 (origin of the LRC that ends at point4)
     while abs(ratio - ratio_old) > 1e-3:
         ratio_old = ratio
-        _p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
-        ratio = _calc_p3_xy(_p3, _p5, p4, _p2.lam_plus)
+        p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
+        p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
+        ratio = _calc_p3_xy(_p3, _p5, p4, p2.lam_plus)
+        if ratio > 1.0 or ratio < 0.0:
+            raise ExtrapolateError()
 
+    _p2 = copy.deepcopy(p2)
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
+    _p3.vals = 0.5 * (_p3.vals + p4.vals)
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
 
-    return True
+    return p4, p2
+def calc_sym_point(p1: Node, p3: Node) -> Node:
 
-def calc_sym_point(p1: Node, p3: Node, p4: Node) -> bool:
-
+    p4 = Node()
     _p1 = copy.deepcopy(p1)
     _p3 = copy.deepcopy(p3)
 
@@ -234,6 +258,85 @@ def calc_sym_point(p1: Node, p3: Node, p4: Node) -> bool:
     _p1.vals = 0.5 * (_p1.vals + p4.vals)
     _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
 
-    return True
+    return p4
 
 
+def wall_contour(x: float) -> float:
+
+    return 3. - (1. - x**2)**0.5
+    # return 1 + (1. - x**2)**0.5
+
+
+if __name__ == '__main__':
+
+    eps = 1e-2
+
+    n = 8
+    x0 = np.zeros(n)
+    y0 = np.linspace(2., 0., n)
+    print(len(y0))
+    tta0 = np.zeros(n)
+    p0 = np.ones(n) * 101325
+    rho0 = np.ones(n) * 1.125
+    vel0 = np.ones(n) * (1.4 * p0 / rho0)**0.5 * 1.1
+
+    xsteps = np.sin(np.linspace(0., math.pi / 12., 9))
+    # xsteps = np.linspace(0., 0.5, 20)
+
+    init_line = [Node(x0[i], y0[i], rho0[i], p0[i], vel0[i], tta0[i]) for i in range(n)]
+    sym_node = copy.deepcopy(init_line[-1])
+
+    grid_points = []
+    grid_points.append(init_line)
+
+    wall_step = 1
+    step = 0
+
+    while(len(init_line) > 0):
+    # for step in range(20):
+        
+        new_line = []
+        # print(step, len(init_line))
+        for i in range(1, len(init_line)):
+            new_node = calc_interior_point(init_line[i - 1], init_line[i])
+            new_line.append(new_node)
+
+            plt.plot([init_line[i - 1].x, new_node.x], [init_line[i - 1].y, new_node.y], '-o', c='r')
+            plt.plot([init_line[i].x, new_node.x], [init_line[i].y, new_node.y], '-o', c='b')
+
+        if step % 2 > 0:
+            old_sym_node = copy.deepcopy(sym_node)
+            sym_node = calc_sym_point(init_line[-1], old_sym_node)
+
+            plt.plot([old_sym_node.x, sym_node.x], [old_sym_node.y, sym_node.y], '-o', c='k')
+            plt.plot([init_line[-1].x,  sym_node.x], [init_line[-1].y,  sym_node.y], '-o', c='r')
+
+            new_line += [sym_node]
+        
+        if wall_step < len(xsteps):
+            try:
+                xw = xsteps[wall_step]
+                wall_node, intp_node = calc_wall_point(xw, wall_contour(xw), 
+                                        (wall_contour(xw + eps) - wall_contour(xw - eps)) / (2.0 * eps),
+                                        init_line[0], new_line[0])
+                plt.plot([xsteps[wall_step-1], wall_node.x], [wall_contour(xsteps[wall_step-1]), wall_node.y], '-o', c='k')
+                plt.plot([intp_node.x,    wall_node.x], [intp_node.y,    wall_node.y], '-o', c='b')
+
+                new_line = [wall_node] + new_line
+                wall_step += 1
+            except ExtrapolateError:
+                pass
+
+        init_line = copy.deepcopy(new_line)
+        grid_points.append(copy.deepcopy(new_line))
+        step += 1
+
+    # plt.xlim(0,1)
+    plt.show()
+
+    plt.plot(range(20), [grid_points[i][0].p for i in range(20)])
+    # plt.plot(range(10), [grid_points[i][0].vel for i in range(10)])
+    # plt.plot(range(10), [grid_points[i][0].a   for i in range(10)])
+    # plt.plot(range(10), [grid_points[i][0].alp / 3.14 * 180 for i in range(10)])
+    # plt.plot(range(10), [grid_points[i][0].tta / 3.14 * 180 for i in range(10)])
+    plt.show()
