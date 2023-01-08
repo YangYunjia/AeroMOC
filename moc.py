@@ -9,10 +9,16 @@ import copy
 import numpy as np
 import matplotlib.pyplot as plt
 
+from typing import Tuple, Callable
+
 GEOM = 0
+
 BIG_NUMBER = 100000.
 
 class ExtrapolateError(Exception):
+    pass
+
+class EndofwallError(Exception):
     pass
 
 class Node():
@@ -261,11 +267,60 @@ def calc_sym_point(p1: Node, p3: Node) -> Node:
     return p4
 
 
-def wall_contour(x: float) -> float:
+class WallPoints():
 
-    return 3. - (1. - x**2)**0.5
-    # return 1 + (1. - x**2)**0.5
+    def __init__(self) -> None:
+        self.xx = None
+        self.yy = None
+        self.dydx = None
+        self.step = 1
+        self.eps = 1e-2
 
+    def __getitem__(self, index) -> Tuple[float, float, float]:
+        return self.xx[index], self.yy[index], self.dydx[index]
+
+    def __next__(self) -> Tuple[float, float, float]:
+        if self.step >= len(self.xx):
+            raise EndofwallError()
+        else:
+            self.step += 1
+            return self[self.step - 1]
+
+    def last(self) -> Tuple[float, float, float]:
+        return self[self.step - 2]
+
+    def add_section(self, xx: np.array, func: Callable, dfunc: Callable = None, relative_to_last: bool = True) -> None:
+        
+        _yy = np.array([func(xi) for xi in xx])
+        
+        if self.xx is not None and relative_to_last:
+            _xx =  xx + self.xx[-1]
+            _yy = _yy + self.yy[-1]
+        else:
+            _xx = xx
+        
+        if dfunc is None:
+            # use centriod differencial to get dydx
+            _dydx = np.array([(func(xi + eps) - func(xi - eps)) / (2.0 * eps) for xi in xx])
+        else:
+            _dydx = np.array([dfunc(xi) for xi in xx])
+        
+        if self.xx is None:
+            self.xx = _xx
+            self.yy = _yy
+            self.dydx = _dydx
+        else:
+            self.xx   = np.concatenate((self.xx,   _xx[1:]), axis=0)
+            self.yy   = np.concatenate((self.yy,   _yy[1:]), axis=0)
+            self.dydx = np.concatenate((self.dydx, _dydx[1:]), axis=0)
+            
+    def plot(self):
+
+        plt.figure(0)
+        plt.plot(self.xx, self.yy, '-o', 'k')
+        plt.show()
+
+        
 
 if __name__ == '__main__':
 
@@ -280,8 +335,11 @@ if __name__ == '__main__':
     rho0 = np.ones(n) * 1.125
     vel0 = np.ones(n) * (1.4 * p0 / rho0)**0.5 * 1.1
 
-    xsteps = np.sin(np.linspace(0., math.pi / 12., 9))
-    # xsteps = np.linspace(0., 0.5, 20)
+    upperwall = WallPoints()
+    upperwall.add_section(np.sin(np.linspace(0., math.pi / 12., 9)), lambda x: 3. - (1. - x**2)**0.5)
+    upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 12.) * x)
+    # upperwall.plot()
+
 
     init_line = [Node(x0[i], y0[i], rho0[i], p0[i], vel0[i], tta0[i]) for i in range(n)]
     sym_node = copy.deepcopy(init_line[-1])
@@ -289,46 +347,51 @@ if __name__ == '__main__':
     grid_points = []
     grid_points.append(init_line)
 
-    wall_step = 1
     step = 0
+    max_step = 100
+    flag_upper_wall = True
 
-    while(len(init_line) > 0):
-    # for step in range(20):
+    while(len(init_line) > 0 and step < max_step):
         
         new_line = []
-        # print(step, len(init_line))
+        # calculate interior points amount = (N_lastline - 1)
         for i in range(1, len(init_line)):
             new_node = calc_interior_point(init_line[i - 1], init_line[i])
             new_line.append(new_node)
 
-            plt.plot([init_line[i - 1].x, new_node.x], [init_line[i - 1].y, new_node.y], '-o', c='r')
-            plt.plot([init_line[i].x, new_node.x], [init_line[i].y, new_node.y], '-o', c='b')
+            plt.plot([init_line[i - 1].x, new_node.x], [init_line[i - 1].y, new_node.y], '-', c='r')
+            plt.plot([init_line[i].x, new_node.x], [init_line[i].y, new_node.y], '-', c='b')
 
         if step % 2 > 0:
             old_sym_node = copy.deepcopy(sym_node)
             sym_node = calc_sym_point(init_line[-1], old_sym_node)
 
-            plt.plot([old_sym_node.x, sym_node.x], [old_sym_node.y, sym_node.y], '-o', c='k')
-            plt.plot([init_line[-1].x,  sym_node.x], [init_line[-1].y,  sym_node.y], '-o', c='r')
+            plt.plot([old_sym_node.x, sym_node.x], [old_sym_node.y, sym_node.y], '-', c='k')
+            plt.plot([init_line[-1].x,  sym_node.x], [init_line[-1].y,  sym_node.y], '-', c='r')
 
             new_line += [sym_node]
         
-        if wall_step < len(xsteps):
-            try:
-                xw = xsteps[wall_step]
-                wall_node, intp_node = calc_wall_point(xw, wall_contour(xw), 
-                                        (wall_contour(xw + eps) - wall_contour(xw - eps)) / (2.0 * eps),
-                                        init_line[0], new_line[0])
-                plt.plot([xsteps[wall_step-1], wall_node.x], [wall_contour(xsteps[wall_step-1]), wall_node.y], '-o', c='k')
-                plt.plot([intp_node.x,    wall_node.x], [intp_node.y,    wall_node.y], '-o', c='b')
+        # upper boundary (wall)
+        try:
+            if flag_upper_wall:
+                xw, yw, dydxw = next(upperwall)
 
-                new_line = [wall_node] + new_line
-                wall_step += 1
-            except ExtrapolateError:
-                pass
+            wall_node, intp_node = calc_wall_point(xw, yw, dydxw, init_line[0], new_line[0])
+
+            plt.plot([upperwall.last()[0], wall_node.x], [upperwall.last()[1], wall_node.y], '-', c='k')
+            plt.plot([intp_node.x,    wall_node.x], [intp_node.y,    wall_node.y], '-', c='b')
+
+            new_line = [wall_node] + new_line
+            flag_upper_wall = True
+
+        except ExtrapolateError:
+            flag_upper_wall = False
+        except EndofwallError:
+            pass
 
         init_line = copy.deepcopy(new_line)
         grid_points.append(copy.deepcopy(new_line))
+        # print(step, len(init_line))
         step += 1
 
     # plt.xlim(0,1)
