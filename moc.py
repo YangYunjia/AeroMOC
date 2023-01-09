@@ -9,7 +9,7 @@ import copy
 import numpy as np
 import matplotlib.pyplot as plt
 
-from typing import Tuple, List, Callable
+from typing import Tuple, List, Dict, Callable
 
 GEOM = 0
 GAS_R = 1.4
@@ -20,6 +20,11 @@ class ExtrapolateError(Exception):
 
 class EndofwallError(Exception):
     pass
+
+class SubsonicError(Exception):
+    
+    def __init__(self, *cors, info) -> None:
+        super().__init__('Subsonic flow occurs during "%s" at point (x,y) = %.4f, %.4f' % (info, cors[0], cors[1]))
 
 class Node():
 
@@ -165,9 +170,54 @@ class Node():
 
     @property
     def ma(self) -> float:
-        return self.vel / self.a
+        _ma = self.vel / self.a
+        if _ma >= 1.0: 
+            return _ma
+        else:
+            raise ValueError('Value for ma = %.3f is not correct' % _ma)
 
-def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float):
+class ShockNode():
+    
+    def __init__(self, xx, yy) -> None:
+        self.cors = np.array([xx, yy])   # x, y
+        
+        self.nf   = Node(xx, yy)
+        self.nb   = Node(xx, yy)
+        self.ttas = BIG_NUMBER
+
+    def set_by_ttab(self):
+        _delta     = self.nb.tta - self.nf.tta   # deflection angle
+        _tan_delta = math.tan(_delta)
+        _mach  = self.nf.ma
+        _g     = self.nf.g
+        # use a table to find beta
+        _betas = np.linspace(0, math.pi / 2., 1000)
+        _tan_deltas = 2. / np.tan(_betas) * (_mach**2 * np.sin(_betas)**2 - 1.) / (_mach**2 * (_g + np.cos(2 * _betas) + 2.))
+        for _i in range(len(_tan_deltas)):
+            if _tan_delta <= _tan_deltas[_i] and _tan_delta > _tan_deltas[_i-1]:
+                _beta = _betas[_i-1] + (_tan_delta - _tan_deltas[_i-1]) / (_tan_deltas[_i] - _tan_deltas[_i-1]) * (_betas[_i] - _betas[_i-1])
+                break
+        else:
+            raise SubsonicError(self.cors, info='Too high deflection angle to form a detached shock wave')
+        
+        self.ttas = self.nf.tta + _beta
+        _ma1sb2 = _mach**2 * math.sin(_beta)**2
+        self.nb.rho = self.nf.rho * ((_g + 1) * _ma1sb2 / (2 + (_g - 1) * _ma1sb2))
+        self.nb.p   = self.nf.p   * (2. * _g / (_g + 1) * _ma1sb2 - (_g - 1) / (_g + 1))
+        self.nb.vel = self.nf.vel * (math.cos(_beta) / math.cos(_beta - _delta))
+
+        _mach2 = self.nb.ma
+        if _mach2 <= 1.0:
+            raise SubsonicError(self.cors, info='Subsonic (Ma2 = %.4f) after oblique shoch wave' % _mach2)
+
+def same_node(p1: Node, p2: Node) -> bool:
+    if ((p1.x - p2.x)**2 + (p1.y - p2.y)**2) < 1e-4:
+        return True
+    else:
+        return False
+
+
+def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> Tuple[float, float, float]:
     ratio = 1 + (g - 1) / 2. * ma**2
     p = pTotal / ratio**(g / (g - 1))
     t = tTotal / ratio
@@ -175,6 +225,10 @@ def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float):
     return p, t, rho
 
 def _calc_p3_xy(_p1: Node, _p2: Node, _p4: Node, tta0: float) -> float:
+    if abs((_p1.y - _p2.y - tta0 * (_p1.x - _p2.x))) < 0.001:
+        raise ExtrapolateError()
+        # print('!')
+        # plt.show()
     return (_p4.y - _p2.y - tta0 * (_p4.x - _p2.x)) / (_p1.y - _p2.y - tta0 * (_p1.x - _p2.x))
 
 def _calc_p4_xy(_p1: Node, _p2: Node, _p4: Node) -> bool:
@@ -228,6 +282,12 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
 
     _calc_p4_xy(_p1, _p2, p4)
 
+    # if new node is too close to the p1 or p2, return old node
+    if same_node(_p1, p4):
+        return p1
+    if same_node(_p2, p4):
+        return p2
+
     _calc_p4_vals(_p1, _p2, p4)
     _p1.vals = 0.5 * (_p1.vals + p4.vals)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
@@ -263,6 +323,7 @@ def calc_wall_point(xx: float, yy: float, dydx: float, p3: Node, p5: Node):
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
 
     return p4, p2
+
 def calc_sym_point(p1: Node, p3: Node) -> Node:
 
     p4 = Node()
@@ -281,10 +342,22 @@ def calc_sym_point(p1: Node, p3: Node) -> Node:
     return p4
 
 def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
-             isTotal: bool = True, rUp: float = 0.0, pTotal: float = 0.0, tTotal: float = 0.0, mT: float = 0.0) -> List[Node]:
+             isTotal: bool = True, rUp: float = 0.0, pTotal: float = 0.0, tTotal: float = 0.0, mT: float = 0.0,
+             **para: Dict) -> List[Node]:
     '''
     This function is interpreted from code of CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
     '''
+    
+    if 'LineMaMax' in para.keys():
+        lmmax = para['lineMaMax']
+    else:
+        lmmax = 1.5
+    if 'LineMaMin' in para.keys():
+        lmmin = para['lineMaMin']
+    else:
+        lmmin = 1.01
+    
+
 
     _init_line: List[Node] = []
 
@@ -293,21 +366,33 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
         # and x[i] is assumed to be on the RRC from the throat wall
         
         # input yy should be non-dimensional
-        _yy = math.sin(math.pi * (n - i) / n / 2.)**1.5
+        # pows =  2.0
+        # _yy = math.sin(math.pi * (n - i) / n / 2.)**pows
+        _yy = (n - i) / n
 
         if i > 0:
             dydx = _init_line[-1].lam_minus   # this calculates a new X first assumed it falls on the RRC
 
-        _mach = 2.0
+        _mach = 0.0
         point = Node()
+        
+        ratio = 1.0
         if isTotal:
             if i > 0:
-                while _mach > 1.5:
-                    _xx = _xx_old + (_yy - _yy_old) / dydx
+                while ratio >= 1.0:
+                    _xx = _xx_old + (_yy - _yy_old) / (dydx * ratio)
                     _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
-                    # increase dydx so that slope is half of what is was, only when mach number exceed 1.5
+                    # increase dydx so that slope is 1.1 of what is was, only when mach number exceed 1.5
                     # this is to prevent the initial line is too steep and lead to solution failure
-                    dydx *= 2.0
+                    if _mach > lmmax:
+                        ratio *= 1.1
+                    elif _mach < lmmin:
+                        ratio /= 1.1
+                    else:
+                        break
+
+                    print(_mach, dydx)
+                    
             else:
                 _xx = 0.0
                 _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
@@ -326,7 +411,7 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
         point.y = (yw0 - yc0) * _yy + yc0
         _xx_old = _xx
         _yy_old = _yy
-        # print(i, _theta, _mach)
+        print(i, _theta, _mach)
         point.set_by_total(tta=_theta, ma=_mach, pt=pTotal, tt=tTotal)
 
         _init_line.append(point)
@@ -362,7 +447,7 @@ def KLThroat(x: float, y: float, G: float, RS: float) -> None:
         v[3] = (6836*G*G + 23031*G + 30627)*y*y*y*y*y*y*y/82944 - (3380*G*G + 11391*G + 15291)*y*y*y*y*y/13824 + (3424*G*G + 11271*G + 15228)*y*y*y/13824 - (7100*G*G + 22311*G + 30249)*y/82944 + z*((556*G*G + 1737*G + 3069)*y*y*y*y*y/1728 * (388*G*G + 1161*G + 1181)*y*y/576 + (304*G*G + 831*G + 1242)*y/864) + z*z*((52*G*G + 51*G + 327)*y*y*y/192 - (52*G*G + 75*G + 279)*y/192) - z*z*z*(7*G - 3)*y/12
         
         U = 1 + u[1]/RSP + (u[1] + u[2])/(RSP*RSP) + (u[1] + 2*u[2] + u[3])/(RSP*RSP*RSP)
-        V = ((G+1)/(2*RSP))*(v[1]/RSP + (1.5*v[1] + v[2])/(RSP*RSP) + (15./8.*v[1] + 2.5*v[2] + v[3])/(RSP*RSP*RSP))**0.5
+        V = ((G+1)/(2*RSP))**0.5 * (v[1]/RSP + (1.5*v[1] + v[2])/(RSP*RSP) + (15./8.*v[1] + 2.5*v[2] + v[3])/(RSP*RSP*RSP))
     
     elif (GEOM == 1):
         #  Calculate the z to be used in the velocity equations Eq 12
@@ -376,20 +461,21 @@ def KLThroat(x: float, y: float, G: float, RS: float) -> None:
         v[3] = (6574*G*G + 26481*G + 40059)*y*y*y*y*y*y*y/181440 - (2254*G*G + 10113*G + 16479)*y*y*y*y*y/25920 + (5026*G*G + 25551*G + 46377)*y*y*y/77760 - (7570*G*G + 45927*G + 98757)*y/544320 +  z*((362*G*G + 1449*G + 3177)*y*y*y*y*y/2160 * (194*G*G + 837*G + 1665)*y*y*y/648 + (854*G*G + 3687*G + 6759)*y/6480) + z*z*((26*G*G + 27*G + 237)*y*y*y/144 - (26*G*G + 51*G + 189)/144) + z*z*z*(-5*G*y/6)
         
         U = 1 + u[1]/RS + u[2]/RS/RS + u[3]/RS/RS/RS
-        V = ((G+1)/RS)*(v[1]/RS + v[2]/RS/RS + v[3]/RS/RS/RS)**0.5
+        V = ((G+1)/RS)**0.5 * (v[1]/RS + v[2]/RS/RS + v[3]/RS/RS/RS)
 
     if (abs(V) < 1e-5): 
         V = 0.0
 
     _theta = math.atan2(V,U)
+    # print(U, V, _theta)
 
     if (abs(_theta) < 1e-5):
         _theta = 0.0
 
     _ma = (U * U + V * V)**0.5
 
-    if _ma < 1.0:
-        raise ValueError("Intial Data Line is subsonic, try increasing Initial Line Angle")
+    # if _ma < 1.0:
+    #     raise ValueError("Intial Data Line is subsonic, try increasing Initial Line Angle")
 
     return _theta, _ma
 
@@ -451,24 +537,26 @@ if __name__ == '__main__':
 
     eps = 1e-2
 
-    n = 12
+    n = 9
 
     ktta = 8.0
     upperwall = WallPoints()
-    upperwall.add_section(np.sin(np.linspace(0., math.pi / 180. * ktta, 9)), lambda x: 8. - (6.**2 - x**2)**0.5)
-    upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
+    upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (6.**2 - x**2)**0.5)
+    upperwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
+    # upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: 8. - (6.**2 - x**2)**0.5)
+    # upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
     # upperwall.plot()
 
-    # x0 = np.zeros(n)
-    # y0 = np.linspace(2., 0., n)
-    # print(len(y0))
-    # tta0 = np.zeros(n)
-    # p0 = np.ones(n) * 101325
-    # rho0 = np.ones(n) * 1.125
-    # vel0 = np.ones(n) * (1.4 * p0 / rho0)**0.5 * 1.1
-    # init_line = [Node(x0[i], y0[i], rho0[i], p0[i], vel0[i], tta0[i]) for i in range(n)]
-    init_line = calc_initial_throat_line(n, 2.0, rUp=9., pTotal=2015., tTotal=2726.)
-    # plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o')
+    x0 = np.zeros(n)
+    y0 = np.linspace(2., 0., n)
+    print(len(y0))
+    tta0 = np.zeros(n)
+    p0 = np.ones(n) * 101325
+    rho0 = np.ones(n) * 1.125
+    vel0 = np.ones(n) * (1.4 * p0 / rho0)**0.5 * 2.2
+    init_line = [Node(x0[i], y0[i], rho0[i], p0[i], vel0[i], tta0[i]) for i in range(n)]
+    # init_line = calc_initial_throat_line(n, 2.0, rUp=9., pTotal=2015., tTotal=2726.)
+    plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o', c='k')
     # plt.plot([pt.x for pt in init_line], [pt.ma for pt in init_line], '-o')
     # plt.show()
 
@@ -478,7 +566,7 @@ if __name__ == '__main__':
     grid_points.append(init_line)
 
     step = 0
-    max_step = 3
+    max_step = 15
     flag_upper_wall = True
 
     while(len(init_line) > 0 and step < max_step):
@@ -492,7 +580,7 @@ if __name__ == '__main__':
             plt.plot([init_line[i - 1].x, new_node.x], [init_line[i - 1].y, new_node.y], '-', c='r')
             plt.plot([init_line[i].x, new_node.x], [init_line[i].y, new_node.y], '-', c='b')
 
-        if step % 2 > 0:
+        if abs(init_line[-1].y - 0.0) > 0.01:
             old_sym_node = copy.deepcopy(sym_node)
             sym_node = calc_sym_point(init_line[-1], old_sym_node)
 
