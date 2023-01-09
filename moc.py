@@ -223,7 +223,7 @@ class ShockNode():
             raise SubsonicError(self.cors, info='Subsonic (Ma2 = %.4f) after oblique shoch wave' % _mach2)
 
 def same_node(p1: Node, p2: Node) -> bool:
-    if ((p1.x - p2.x)**2 + (p1.y - p2.y)**2) < 1e-4:
+    if ((p1.x - p2.x)**2 + (p1.y - p2.y)**2) < 1e-6:
         return True
     else:
         return False
@@ -294,6 +294,7 @@ def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> T
 def _calc_p3_xy(_p1: Node, _p2: Node, _p4: Node, tta0: float) -> float:
     if abs((_p1.y - _p2.y - tta0 * (_p1.x - _p2.x))) < 0.001:
         raise ExtrapolateError()
+        # pass
         # print('!')
         # plt.show()
     return (_p4.y - _p2.y - tta0 * (_p4.x - _p2.x)) / (_p1.y - _p2.y - tta0 * (_p1.x - _p2.x))
@@ -360,36 +361,51 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
     _calc_p4_vals(_p1, _p2, p4)
 
+    plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='b')
+    plt.plot([p2.x, p4.x], [p2.y, p4.y], '-', c='r')
+
     return p4
 
-def calc_wall_point(xx: float, yy: float, dydx: float, p3: Node, p5: Node):
+def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node]) -> Tuple[Node, int]:
     
     p4  =  Node(xx, yy)
     p4.tta = math.atan(dydx)
-
-    _p5 = copy.deepcopy(p5)
-    _p3 = copy.deepcopy(p3)
-
     p2 = Node()
+    llidx = 0
 
-    ratio = 0.5
-    ratio_old = 0.0
-    # decide the point2 (origin of the LRC that ends at point4)
-    while abs(ratio - ratio_old) > 1e-3:
-        ratio_old = ratio
-        p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
-        p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
-        ratio = _calc_p3_xy(_p3, _p5, p4, p2.lam_plus)
-        if ratio > 1.0 or ratio < 0.0:
-            raise ExtrapolateError()
+    while llidx < len(last_line) - 1:
+       
+        _p5 = copy.deepcopy(last_line[llidx])
+        _p3 = copy.deepcopy(last_line[llidx + 1])
 
+        ratio = 0.5
+        ratio_old = 0.0
+        # decide the point2 (origin of the LRC that ends at point4)
+        flag_extrapolate = False
+        while abs(ratio - ratio_old) > 1e-3:
+            ratio_old = ratio
+            p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
+            p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
+            ratio = _calc_p3_xy(_p3, _p5, p4, p2.lam_plus)
+            if ratio > 1.0 or ratio < 0.0:
+                flag_extrapolate = True
+                break
+        
+        if not flag_extrapolate:
+            break
+
+        llidx += 1
+        
     _p2 = copy.deepcopy(p2)
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
     _p3.vals = 0.5 * (_p3.vals + p4.vals)
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
 
-    return p4, p2
+    plt.plot([last_line[0].x, p4.x], [last_line[0].y, p4.y], '-', c='k')
+    plt.plot([p2.x,           p4.x], [p2.y,           p4.y], '-', c='b')
+
+    return p4, llidx
 
 def calc_sym_point(p1: Node, p3: Node) -> Node:
 
@@ -405,6 +421,9 @@ def calc_sym_point(p1: Node, p3: Node) -> Node:
     _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
     _p1.vals = 0.5 * (_p1.vals + p4.vals)
     _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
+
+    plt.plot([p3.x, p4.x], [p3.y, p4.y], '--', c='k')
+    plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='r')
 
     return p4
 
@@ -448,8 +467,8 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
         _mach = 0.0
         point = Node()
         
-        ratio = 1.0
         if mode in ['total']:
+            ratio = 1.0
             if i > 0:
                 while ratio >= 1.0:
                     _xx = _xx_old + (_yy - _yy_old) / (dydx * ratio)
@@ -485,15 +504,15 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
         point.x = (yw0 - yc0) * _xx
         point.y = (yw0 - yc0) * _yy + yc0
 
-        if mT < 1.0:
+        if point.ma < 1.0:
             raise SubsonicError(point.x, point.y, info="Calculated Throat Mach number < 1.0 at CalcInitialThroatLine")
 
         _xx_old = _xx
         _yy_old = _yy
         # print(i, _theta, _mach)
-
-
         _init_line.append(point)
+
+    plt.plot([ip.x for ip in _init_line], [ip.y for ip in _init_line], '-x', c='r')
 
     return _init_line
                 
@@ -558,43 +577,29 @@ def KLThroat(x: float, y: float, G: float, RS: float) -> None:
 
     return _theta, _ma
 
-def calc_chara_line(last_line: List[Node], wall: WallPoints) -> List[Node]:
+def calc_chara_line(last_line: List[Node], _xw: float, _yw: float, _dydxw: float) -> List[Node]:
 
     # boundary (wall)
-    try:
-        xw, yw, dydxw = next(wall)
-    except EndofwallError:
-        return []
-
-    _i = 0
-
-    while _i < len(last_line) - 1:
-        try:
-            wall_node, intp_node = calc_wall_point(xw, yw, dydxw, last_line[_i], last_line[_i + 1])
-            break
-        except ExtrapolateError:
-            _i += 1
-
-    plt.plot([wall.last()[0], wall_node.x], [wall.last()[1], wall_node.y], '-', c='k')
-    plt.plot([intp_node.x,    wall_node.x], [intp_node.y,    wall_node.y], '-', c='b')
-
-    new_line = [wall_node]
+    wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, last_line)
+    new_line = [wall_point]
 
     for _ii in range(_i + 1, len(last_line)):
         new_node = calc_interior_point(new_line[-1], last_line[_ii])
         new_line.append(new_node)
 
-        plt.plot([new_line[-2].x,   new_node.x], [new_line[-2].y,   new_node.y], '-', c='r')
-        plt.plot([last_line[_ii].x, new_node.x], [last_line[_ii].y, new_node.y], '-', c='b')
-
-
     sym_node = calc_sym_point(new_line[-1], last_line[-1])
-
-    plt.plot([last_line[-1].x, sym_node.x], [last_line[-1].y, sym_node.y], '--', c='k')
-    plt.plot([new_line[-1].x,  sym_node.x], [new_line[-1].y,  sym_node.y], '-', c='r')
-
+    
     new_line += [sym_node]
     return new_line
+
+def calc_shock_line(lines: List[List[Node]], xw: float, yw: float, dydxw: float) -> List[ShockNode]:
+
+    # calculate shock node on the initial point (A.)
+    wall_point, _i = calc_wall_point(xw, yw, dydxw, lines[-1])
+    new_line = [wall_point]
+
+    pass
+
 
 if __name__ == '__main__':
 
@@ -604,40 +609,45 @@ if __name__ == '__main__':
 
     ktta = 8.0
     upperwall = WallPoints()
-    upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (6.**2 - x**2)**0.5)
-    upperwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
-    # upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: 8. - (6.**2 - x**2)**0.5)
-    # upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
+    # upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (6.**2 - x**2)**0.5)
+    # upperwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
+    upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: 8. - (6.**2 - x**2)**0.5)
+    upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
     # upperwall.plot()
 
-    init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
-    # init_line = calc_initial_throat_line(n, 2.0, rUp=9., pTotal=2015., tTotal=2726.)
+    # init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
+    init_line = calc_initial_throat_line(n, 2.0, mode='total', rUp=9., p=2015., t=2726.)
     # plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o', c='k')
     # plt.plot([pt.x for pt in init_line], [pt.ma for pt in init_line], '-o')
     # plt.show()
 
-    grid_points = []
-    grid_points.append(init_line)
+    lines = []
+    lines.append(init_line)
 
     step = 0
-    max_step = 5
+    max_step = 100
 
     lastl = init_line
 
     while len(lastl) > 0 and step < max_step:
+
+        try:
+            xw, yw, dydxw = next(upperwall)
+        except EndofwallError:
+            break
         
-        newl = calc_chara_line(lastl, upperwall)
+        newl = calc_chara_line(lastl, xw, yw, dydxw)
         # calculate interior points amount = (N_lastline - 1)
         
         lastl = copy.deepcopy(newl)
-        grid_points.append(copy.deepcopy(newl))
+        lines.append(copy.deepcopy(newl))
         # print(step, len(init_line))
         step += 1
 
     # plt.xlim(0,1)
     plt.show()
 
-    plt.plot(range(20), [grid_points[i][0].p for i in range(20)])
+    plt.plot(range(len(lines)), [lines[i][0].p for i in range(len(lines))])
     # plt.plot(range(10), [grid_points[i][0].vel for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].a   for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].alp / 3.14 * 180 for i in range(10)])
