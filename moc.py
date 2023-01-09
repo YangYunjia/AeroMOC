@@ -26,6 +26,12 @@ class SubsonicError(Exception):
     def __init__(self, *cors, info) -> None:
         super().__init__('Subsonic flow occurs during "%s" at point (x,y) = %.4f, %.4f' % (info, cors[0], cors[1]))
 
+class KeySelectError(Exception):
+    
+    def __init__(self, key, value) -> None:
+        super().__init__('No value: "%s" for key "%s"' % (value, key))
+
+
 class Node():
 
     def __init__(self, *value) -> None:
@@ -42,9 +48,15 @@ class Node():
     def __repr__(self) -> str:
         return '(%.2f, %.2f) (%.2f, %.2f %.2f, %.2f)' % tuple(list(self.cors) + list(self.vals))
 
-    def set_by_total(self, tta: float, ma: float, pt: float, tt: float):
+    def set_by_total(self, tta: float, ma: float, pt: float, tt: float) -> None:
         p, t, rho = calc_isentropicPTRHO(g=self.g, ma=ma, pTotal=pt, tTotal=tt)
         self.rho = rho
+        self.p   = p
+        self.vel = ma * (self.g * GAS_R * t)**0.5
+        self.tta = tta
+
+    def set_by_static(self, tta: float, ma: float, p: float, t: float) -> None:
+        self.rho = p / (GAS_R * t)
         self.p   = p
         self.vel = ma * (self.g * GAS_R * t)**0.5
         self.tta = tta
@@ -217,6 +229,61 @@ def same_node(p1: Node, p2: Node) -> bool:
         return False
 
 
+class WallPoints():
+
+    def __init__(self) -> None:
+        self.xx = None
+        self.yy = None
+        self.dydx = None
+        self.step = 1
+        self.eps = 1e-2
+
+    def __getitem__(self, index) -> Tuple[float, float, float]:
+        return self.xx[index], self.yy[index], self.dydx[index]
+
+    def __next__(self) -> Tuple[float, float, float]:
+        if self.step >= len(self.xx):
+            raise EndofwallError()
+        else:
+            self.step += 1
+            return self[self.step - 1]
+
+    def last(self) -> Tuple[float, float, float]:
+        return self[self.step - 2]
+
+    def add_section(self, xx: np.array, func: Callable, dfunc: Callable = None, relative_to_last: bool = True) -> None:
+        
+        _yy = np.array([func(xi) for xi in xx])
+        
+        if self.xx is not None and relative_to_last:
+            _xx =  xx + self.xx[-1]
+            _yy = _yy + self.yy[-1]
+        else:
+            _xx = xx
+        
+        if dfunc is None:
+            # use centriod differencial to get dydx
+            _dydx = np.array([(func(xi + eps) - func(xi - eps)) / (2.0 * eps) for xi in xx])
+        else:
+            _dydx = np.array([dfunc(xi) for xi in xx])
+        
+        if self.xx is None:
+            self.xx = _xx
+            self.yy = _yy
+            self.dydx = _dydx
+        else:
+            self.xx   = np.concatenate((self.xx,   _xx[1:]), axis=0)
+            self.yy   = np.concatenate((self.yy,   _yy[1:]), axis=0)
+            self.dydx = np.concatenate((self.dydx, _dydx[1:]), axis=0)
+            
+    def plot(self):
+
+        plt.figure(0)
+        plt.plot(self.xx, self.yy, '-o', 'k')
+        plt.show()
+
+
+
 def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> Tuple[float, float, float]:
     ratio = 1 + (g - 1) / 2. * ma**2
     p = pTotal / ratio**(g / (g - 1))
@@ -342,7 +409,7 @@ def calc_sym_point(p1: Node, p3: Node) -> Node:
     return p4
 
 def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
-             isTotal: bool = True, rUp: float = 0.0, pTotal: float = 0.0, tTotal: float = 0.0, mT: float = 0.0,
+             mode: str = 'total', rUp: float = 0.0, p: float = 0.0, t: float = 0.0, mT: float = 0.0,
              **para: Dict) -> List[Node]:
     '''
     This function is interpreted from code of CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
@@ -357,8 +424,6 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
     else:
         lmmin = 1.01
     
-
-
     _init_line: List[Node] = []
 
     for i in range(n + 1):
@@ -366,9 +431,16 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
         # and x[i] is assumed to be on the RRC from the throat wall
         
         # input yy should be non-dimensional
-        # pows =  2.0
-        # _yy = math.sin(math.pi * (n - i) / n / 2.)**pows
-        _yy = (n - i) / n
+        if 'InitPointsDistri' in para.keys():
+            if para['InitPointsDistri'] in ['equal']:
+                _yy = (n - i) / n
+            elif para['InitPointsDistri'] in ['sin']:
+                pows =  1.5
+                _yy = math.sin(math.pi * (n - i) / n / 2.)**pows
+            else:
+                raise KeySelectError('InitPointsDistri', para['InitPointsDistri'])
+        else:
+            _yy = (n - i) / n
 
         if i > 0:
             dydx = _init_line[-1].lam_minus   # this calculates a new X first assumed it falls on the RRC
@@ -377,7 +449,7 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
         point = Node()
         
         ratio = 1.0
-        if isTotal:
+        if mode in ['total']:
             if i > 0:
                 while ratio >= 1.0:
                     _xx = _xx_old + (_yy - _yy_old) / (dydx * ratio)
@@ -390,29 +462,36 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
                         ratio /= 1.1
                     else:
                         break
-
-                    print(_mach, dydx)
-                    
+                    # print(_mach, dydx)
             else:
                 _xx = 0.0
                 _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
 
-        else:
-            if mT < 1.0:
-                raise ValueError("Calculated Throat Mach number < 1.0\nCalcInitialThroatLine")
+            point.set_by_total(tta=_theta, ma=_mach, pt=p, tt=t)
+            
+        elif mode in ['static']:
             _theta = 0.0
             _mach  = mT
             if i > 0:
-                _xx = _xx_old.x + (_yy - _yy_old) / dydx
+                _xx = _xx_old + (_yy - _yy_old) / dydx
             else:
                 _xx = 0.0
+
+            point.set_by_static(tta=0.0, ma=mT, p=p, t=t)
+
+        else:
+            raise KeySelectError('initial line mode', mode)
         
         point.x = (yw0 - yc0) * _xx
         point.y = (yw0 - yc0) * _yy + yc0
+
+        if mT < 1.0:
+            raise SubsonicError(point.x, point.y, info="Calculated Throat Mach number < 1.0 at CalcInitialThroatLine")
+
         _xx_old = _xx
         _yy_old = _yy
-        print(i, _theta, _mach)
-        point.set_by_total(tta=_theta, ma=_mach, pt=pTotal, tt=tTotal)
+        # print(i, _theta, _mach)
+
 
         _init_line.append(point)
 
@@ -479,59 +558,43 @@ def KLThroat(x: float, y: float, G: float, RS: float) -> None:
 
     return _theta, _ma
 
+def calc_chara_line(last_line: List[Node], wall: WallPoints) -> List[Node]:
 
-class WallPoints():
+    # boundary (wall)
+    try:
+        xw, yw, dydxw = next(wall)
+    except EndofwallError:
+        return []
 
-    def __init__(self) -> None:
-        self.xx = None
-        self.yy = None
-        self.dydx = None
-        self.step = 1
-        self.eps = 1e-2
+    _i = 0
 
-    def __getitem__(self, index) -> Tuple[float, float, float]:
-        return self.xx[index], self.yy[index], self.dydx[index]
+    while _i < len(last_line) - 1:
+        try:
+            wall_node, intp_node = calc_wall_point(xw, yw, dydxw, last_line[_i], last_line[_i + 1])
+            break
+        except ExtrapolateError:
+            _i += 1
 
-    def __next__(self) -> Tuple[float, float, float]:
-        if self.step >= len(self.xx):
-            raise EndofwallError()
-        else:
-            self.step += 1
-            return self[self.step - 1]
+    plt.plot([wall.last()[0], wall_node.x], [wall.last()[1], wall_node.y], '-', c='k')
+    plt.plot([intp_node.x,    wall_node.x], [intp_node.y,    wall_node.y], '-', c='b')
 
-    def last(self) -> Tuple[float, float, float]:
-        return self[self.step - 2]
+    new_line = [wall_node]
 
-    def add_section(self, xx: np.array, func: Callable, dfunc: Callable = None, relative_to_last: bool = True) -> None:
-        
-        _yy = np.array([func(xi) for xi in xx])
-        
-        if self.xx is not None and relative_to_last:
-            _xx =  xx + self.xx[-1]
-            _yy = _yy + self.yy[-1]
-        else:
-            _xx = xx
-        
-        if dfunc is None:
-            # use centriod differencial to get dydx
-            _dydx = np.array([(func(xi + eps) - func(xi - eps)) / (2.0 * eps) for xi in xx])
-        else:
-            _dydx = np.array([dfunc(xi) for xi in xx])
-        
-        if self.xx is None:
-            self.xx = _xx
-            self.yy = _yy
-            self.dydx = _dydx
-        else:
-            self.xx   = np.concatenate((self.xx,   _xx[1:]), axis=0)
-            self.yy   = np.concatenate((self.yy,   _yy[1:]), axis=0)
-            self.dydx = np.concatenate((self.dydx, _dydx[1:]), axis=0)
-            
-    def plot(self):
+    for _ii in range(_i + 1, len(last_line)):
+        new_node = calc_interior_point(new_line[-1], last_line[_ii])
+        new_line.append(new_node)
 
-        plt.figure(0)
-        plt.plot(self.xx, self.yy, '-o', 'k')
-        plt.show()
+        plt.plot([new_line[-2].x,   new_node.x], [new_line[-2].y,   new_node.y], '-', c='r')
+        plt.plot([last_line[_ii].x, new_node.x], [last_line[_ii].y, new_node.y], '-', c='b')
+
+
+    sym_node = calc_sym_point(new_line[-1], last_line[-1])
+
+    plt.plot([last_line[-1].x, sym_node.x], [last_line[-1].y, sym_node.y], '--', c='k')
+    plt.plot([new_line[-1].x,  sym_node.x], [new_line[-1].y,  sym_node.y], '-', c='r')
+
+    new_line += [sym_node]
+    return new_line
 
 if __name__ == '__main__':
 
@@ -547,68 +610,27 @@ if __name__ == '__main__':
     # upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
     # upperwall.plot()
 
-    x0 = np.zeros(n)
-    y0 = np.linspace(2., 0., n)
-    print(len(y0))
-    tta0 = np.zeros(n)
-    p0 = np.ones(n) * 101325
-    rho0 = np.ones(n) * 1.125
-    vel0 = np.ones(n) * (1.4 * p0 / rho0)**0.5 * 2.2
-    init_line = [Node(x0[i], y0[i], rho0[i], p0[i], vel0[i], tta0[i]) for i in range(n)]
+    init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
     # init_line = calc_initial_throat_line(n, 2.0, rUp=9., pTotal=2015., tTotal=2726.)
-    plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o', c='k')
+    # plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o', c='k')
     # plt.plot([pt.x for pt in init_line], [pt.ma for pt in init_line], '-o')
     # plt.show()
-
-    sym_node = copy.deepcopy(init_line[-1])
 
     grid_points = []
     grid_points.append(init_line)
 
     step = 0
-    max_step = 15
-    flag_upper_wall = True
+    max_step = 5
 
-    while(len(init_line) > 0 and step < max_step):
+    lastl = init_line
+
+    while len(lastl) > 0 and step < max_step:
         
-        new_line = []
+        newl = calc_chara_line(lastl, upperwall)
         # calculate interior points amount = (N_lastline - 1)
-        for i in range(1, len(init_line)):
-            new_node = calc_interior_point(init_line[i - 1], init_line[i])
-            new_line.append(new_node)
-
-            plt.plot([init_line[i - 1].x, new_node.x], [init_line[i - 1].y, new_node.y], '-', c='r')
-            plt.plot([init_line[i].x, new_node.x], [init_line[i].y, new_node.y], '-', c='b')
-
-        if abs(init_line[-1].y - 0.0) > 0.01:
-            old_sym_node = copy.deepcopy(sym_node)
-            sym_node = calc_sym_point(init_line[-1], old_sym_node)
-
-            plt.plot([old_sym_node.x, sym_node.x], [old_sym_node.y, sym_node.y], '-', c='k')
-            plt.plot([init_line[-1].x,  sym_node.x], [init_line[-1].y,  sym_node.y], '-', c='r')
-
-            new_line += [sym_node]
         
-        # upper boundary (wall)
-        try:
-            if flag_upper_wall:
-                xw, yw, dydxw = next(upperwall)
-
-            wall_node, intp_node = calc_wall_point(xw, yw, dydxw, init_line[0], new_line[0])
-
-            plt.plot([upperwall.last()[0], wall_node.x], [upperwall.last()[1], wall_node.y], '-', c='k')
-            plt.plot([intp_node.x,    wall_node.x], [intp_node.y,    wall_node.y], '-', c='b')
-
-            new_line = [wall_node] + new_line
-            flag_upper_wall = True
-
-        except ExtrapolateError:
-            flag_upper_wall = False
-        except EndofwallError:
-            pass
-
-        init_line = copy.deepcopy(new_line)
-        grid_points.append(copy.deepcopy(new_line))
+        lastl = copy.deepcopy(newl)
+        grid_points.append(copy.deepcopy(newl))
         # print(step, len(init_line))
         step += 1
 
