@@ -31,11 +31,36 @@ class KeySelectError(Exception):
     def __init__(self, key, value) -> None:
         super().__init__('No value: "%s" for key "%s"' % (value, key))
 
+class BasicNode():
+    def __init__(self) -> None:
+        self.cors   = np.ones(2) * (-BIG_NUMBER)   # x, y
 
-class Node():
+    @property
+    def x(self) -> float:
+        if self.cors[0] > -BIG_NUMBER: 
+            return self.cors[0]
+        else:
+            raise ValueError('Value for x is not correct')
+    
+    @x.setter
+    def x(self, value):
+        self.cors[0] = value
+
+    @property
+    def y(self) -> float:
+        if self.cors[1] > -BIG_NUMBER: 
+            return self.cors[1]
+        else:
+            raise ValueError('Value for y is not correct')
+    
+    @y.setter
+    def y(self, value):
+        self.cors[1] = value
+
+class Node(BasicNode):
 
     def __init__(self, *value) -> None:
-        self.cors   = np.ones(2) * (-BIG_NUMBER)   # x, y
+        super().__init__()
         self.vals   = np.array([-1.0, -1.0, -1.0, BIG_NUMBER])  # rho, p, vel, tta
         
         if len(value) in [2, 6]:
@@ -60,28 +85,6 @@ class Node():
         self.p   = p
         self.vel = ma * (self.g * GAS_R * t)**0.5
         self.tta = tta
-
-    @property
-    def x(self) -> float:
-        if self.cors[0] > -BIG_NUMBER: 
-            return self.cors[0]
-        else:
-            raise ValueError('Value for x is not correct')
-    
-    @x.setter
-    def x(self, value):
-        self.cors[0] = value
-
-    @property
-    def y(self) -> float:
-        if self.cors[1] > -BIG_NUMBER: 
-            return self.cors[1]
-        else:
-            raise ValueError('Value for y is not correct')
-    
-    @y.setter
-    def y(self, value):
-        self.cors[1] = value
 
     @property
     def rho(self) -> float:
@@ -188,16 +191,18 @@ class Node():
         else:
             raise ValueError('Value for ma = %.3f is not correct' % _ma)
 
-class ShockNode():
+class ShockNode(BasicNode):
     
-    def __init__(self, xx, yy) -> None:
-        self.cors = np.array([xx, yy])   # x, y
+    def __init__(self, nodef: Node) -> None:
+        super().__init__()
+        self.cors = np.array([nodef.x, nodef.y])   # x, y
         
-        self.nf   = Node(xx, yy)
-        self.nb   = Node(xx, yy)
+        self.nf   = nodef
+        self.nb   = Node(nodef.x, nodef.y)
         self.ttas = BIG_NUMBER
 
-    def set_by_ttab(self):
+    def set_by_ttab(self, ttab: float):
+        self.nb.tta = ttab
         _delta     = self.nb.tta - self.nf.tta   # deflection angle
         _tan_delta = math.tan(_delta)
         _mach  = self.nf.ma
@@ -291,18 +296,28 @@ def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> T
     rho = p / (GAS_R * t)
     return p, t, rho
 
-def _calc_p3_xy(_p1: Node, _p2: Node, _p4: Node, tta0: float) -> float:
-    if abs((_p1.y - _p2.y - tta0 * (_p1.x - _p2.x))) < 0.001:
+def _calc_p3_xy(p1x: float, p1y: float, p2x: float, p2y: float, p4x: float, p4y: float, p4tta: float) -> float:
+    '''
+    calculate the ratio (3 - 2) / (1 - 2) given the coordinate of p.1, p.2 and p.4 and the absolute angle 3-4
+
+    >>>    1 -
+    >>>    |      -  4
+    >>>    3 --    -
+    >>>    |   -
+    >>>    2-
+
+    '''
+    if abs((p1y - p2y - p4tta * (p1x - p2x))) < 0.001:
         raise ExtrapolateError()
         # pass
         # print('!')
         # plt.show()
-    return (_p4.y - _p2.y - tta0 * (_p4.x - _p2.x)) / (_p1.y - _p2.y - tta0 * (_p1.x - _p2.x))
+    return (p4y - p2y - p4tta * (p4x - p2x)) / (p1y - p2y - p4tta * (p1x - p2x))
 
-def _calc_p4_xy(_p1: Node, _p2: Node, _p4: Node) -> bool:
-    _p4.x = ((_p1.y - _p2.y) - (_p1.lam_minus * _p1.x - _p2.lam_plus * _p2.x)) / (_p2.lam_plus - _p1.lam_minus)
-    _p4.y = _p2.y + _p2.lam_plus * (_p4.x - _p2.x)
-    return True
+def _calc_p4_xy(p1x: float, p1y: float, p1tta: float, p2x: float, p2y: float, p2tta: float) -> Tuple[float, float]:
+    p4x = ((p1y - p2y) - (p1tta * p1x - p2tta * p2x)) / (p2tta - p1tta)
+    p4y = p2y + p2tta * (p4x - p2x)
+    return p4x, p4y
 
 def _calc_p4_vals(_p1: Node, _p2: Node, _p4: Node) -> bool:
     _p3 = Node()
@@ -313,7 +328,7 @@ def _calc_p4_vals(_p1: Node, _p2: Node, _p4: Node) -> bool:
     _p4.tta = T_plus - _p2.Q * _p4.p
 
     # the ratio of point 3 on the line p1-p2 from p2
-    ratio = _calc_p3_xy(_p1, _p2, _p4, _p4.tta)
+    ratio = _calc_p3_xy(_p1.x, _p1.y, _p2.x, _p2.y, _p4.x, _p4.y, _p4.tta)
 
     _p3.vals = _p2.vals + ratio * (_p1.vals - _p2.vals)
 
@@ -342,13 +357,11 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
     '''
     
     '''
-    p4  = Node()
     _p1 = copy.deepcopy(p1)
     _p2 = copy.deepcopy(p2)
 
-    # predict step
-
-    _calc_p4_xy(_p1, _p2, p4)
+    p4x, p4y = _calc_p4_xy(_p1.x, _p1.y, _p1.lam_minus, _p2.x, _p2.y, _p2.lam_plus)
+    p4  = Node(p4x, p4y)
 
     # if new node is too close to the p1 or p2, return old node
     if same_node(_p1, p4):
@@ -356,7 +369,9 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
     if same_node(_p2, p4):
         return p2
 
+    # predict step
     _calc_p4_vals(_p1, _p2, p4)
+    # correction step
     _p1.vals = 0.5 * (_p1.vals + p4.vals)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
     _calc_p4_vals(_p1, _p2, p4)
@@ -366,36 +381,45 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
 
     return p4
 
-def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node]) -> Tuple[Node, int]:
+def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or ShockNode]) -> Tuple[Node, int]:
     
     p4  =  Node(xx, yy)
     p4.tta = math.atan(dydx)
     p2 = Node()
-    llidx = 0
+    llidx = 0   # node index on the last rrc line
 
     while llidx < len(last_line) - 1:
        
         _p5 = copy.deepcopy(last_line[llidx])
-        _p3 = copy.deepcopy(last_line[llidx + 1])
+        # remind that only can the last point of the last rrc line be a ShockNode
+        if isinstance(last_line[llidx + 1], ShockNode):
+            _p3 = copy.deepcopy(last_line[llidx + 1].nb)
+        else:
+            _p3 = copy.deepcopy(last_line[llidx + 1])
 
         ratio = 0.5
         ratio_old = 0.0
         # decide the point2 (origin of the LRC that ends at point4)
-        flag_extrapolate = False
-        while abs(ratio - ratio_old) > 1e-3:
-            ratio_old = ratio
-            p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
-            p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
-            ratio = _calc_p3_xy(_p3, _p5, p4, p2.lam_plus)
-            if ratio > 1.0 or ratio < 0.0:
-                flag_extrapolate = True
-                break
-        
-        if not flag_extrapolate:
+        try:
+            while abs(ratio - ratio_old) > 1e-3:
+                ratio_old = ratio
+                p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
+                p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
+                ratio = _calc_p3_xy(_p3.x, _p3.y, _p5.x, _p5.y, p4.x, p4.y, p2.lam_plus)
+                if ratio > 1.0 or ratio < 0.0: raise ExtrapolateError()
             break
+        except ExtrapolateError:
+            llidx += 1
+    
+    else:
+        # when can find a interaction point between the lrc to the wall point, and the last rrc
+        # two possible condition:
+        #  - first: the last rrc is intercepted by an shock wave 
+        #  - second: the solution is fail
+        if isinstance(last_line[llidx + 1], ShockNode):
+            # p.2 is obtained by find the intersection betw. s.w and lrc
+            raise NotImplementedError()
 
-        llidx += 1
-        
     _p2 = copy.deepcopy(p2)
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
@@ -403,7 +427,7 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node]) ->
     _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
 
     plt.plot([last_line[0].x, p4.x], [last_line[0].y, p4.y], '-', c='k')
-    plt.plot([p2.x,           p4.x], [p2.y,           p4.y], '-', c='b')
+    plt.plot([p2.x,           p4.x], [p2.y,           p4.y], '-', c='r')
 
     return p4, llidx
 
@@ -423,13 +447,54 @@ def calc_sym_point(p1: Node, p3: Node) -> Node:
     _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
 
     plt.plot([p3.x, p4.x], [p3.y, p4.y], '--', c='k')
-    plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='r')
+    plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='b')
 
     return p4
 
-def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
+def calc_shock_wall_point(xx: float, yy: float, dydx1: float, dydx2: float, last_line: List[Node]) -> Tuple[ShockNode, int]:
+    wall_point, _i = calc_wall_point(xx, yy, dydx1, last_line)
+    wall_node = ShockNode(nodef=wall_point)
+    wall_node.set_by_ttab(ttab=dydx2)
+    return wall_node, _i
+
+def calc_shock_interior_point(p0: ShockNode, p2: Node) -> ShockNode:
+    
+    _p0 = copy.deepcopy(p0)
+    _p2 = copy.deepcopy(p2)
+
+    # (1) determin the x,y of the p.4
+    p4x, p4y = _calc_p4_xy(_p0.x, _p0.y, _p0.ttas, _p2.x, _p2.y, _p2.lam_plus)
+    if p4x <= p2.x:     # shock wave interact with the current rrc
+        raise ExtrapolateError()
+    p4  = Node(p4x, p4y)
+    
+    # (2) find the p.1 (inital point of the lrc to p.4)
+    p1 = Node()
+    p1ratio = 0.5
+    p1ratio_old = 0.0
+    while abs(p1ratio - p1ratio_old) > 1e-3:
+        p1ratio_old = p1ratio
+        p1.cors = _p2.cors + p1ratio * (_p0.cors - _p2.cors)
+        p1.vals = _p2.vals + p1ratio * (_p0.nf.vals - _p2.vals)
+        p1ratio = _calc_p3_xy(_p0.x, _p0.y, _p2.x, _p2.y, p4x, p4y, p1.lam_minus)
+        if p1ratio > 1.0 or p1ratio < 0.0: raise ExtrapolateError()
+
+    # (3) calculate the p.4 with interior point formula
+    # predict step
+    _calc_p4_vals(p1, _p2, p4)
+    # correction step
+    p1.vals  = 0.5 * (p1.vals  + p4.vals)
+    _p2.vals = 0.5 * (_p2.vals + p4.vals)
+    _calc_p4_vals(p1, _p2, p4)
+    
+
+
+    pass
+
+
+def calc_initial_throat_line(n: int, yw0: float, tw: str = 'wall', yc0: float = 0.0, tc: str = 'sym',
              mode: str = 'total', rUp: float = 0.0, p: float = 0.0, t: float = 0.0, mT: float = 0.0,
-             **para: Dict) -> List[Node]:
+             **para: Dict) -> Tuple[List[Node], List[Node]]:
     '''
     This function is interpreted from code of CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
     '''
@@ -443,79 +508,121 @@ def calc_initial_throat_line(n: int, yw0: float, yc0: float = 0.0,
     else:
         lmmin = 1.01
     
-    _init_line: List[Node] = []
+    rline: List[Node] = []
+    lline: List[Node] = []
 
-    for i in range(n + 1):
-        # Based on the way it is done in RAO, the y[i] is based on a sinusoidal
-        # and x[i] is assumed to be on the RRC from the throat wall
-        
-        # input yy should be non-dimensional
-        if 'InitPointsDistri' in para.keys():
-            if para['InitPointsDistri'] in ['equal']:
-                _yy = (n - i) / n
-            elif para['InitPointsDistri'] in ['sin']:
-                pows =  1.5
-                _yy = math.sin(math.pi * (n - i) / n / 2.)**pows
-            else:
-                raise KeySelectError('InitPointsDistri', para['InitPointsDistri'])
+    # determine the y-dirction points, input yy should be non-dimensional
+    if 'InitPointsDistri' in para.keys():
+        if para['InitPointsDistri'] in ['equal']:
+            _yy = (n - np.arange(n + 1)) / n
+        elif para['InitPointsDistri'] in ['sin']:
+            pows =  1.5
+            _yy = np.sin(math.pi * (n - np.arange(n + 1)) / n / 2.)**pows
+            # Based on the way it is done in RAO, the y[i] is based on a sinusoidal
+            # and x[i] is assumed to be on the RRC from the throat wall
         else:
-            _yy = (n - i) / n
+            raise KeySelectError('InitPointsDistri', para['InitPointsDistri'])
+    else:
+        _yy = (n - np.arange(n + 1)) / n
 
-        if i > 0:
-            dydx = _init_line[-1].lam_minus   # this calculates a new X first assumed it falls on the RRC
+    ir = 0
+    il = n
+    while ir <= n and il >= 0:
 
-        _mach = 0.0
-        point = Node()
-        
-        if mode in ['total']:
-            ratio = 1.0
-            if i > 0:
-                while ratio >= 1.0:
-                    _xx = _xx_old + (_yy - _yy_old) / (dydx * ratio)
-                    _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
-                    # increase dydx so that slope is 1.1 of what is was, only when mach number exceed 1.5
-                    # this is to prevent the initial line is too steep and lead to solution failure
-                    if _mach > lmmax:
-                        ratio *= 1.1
-                    elif _mach < lmmin:
-                        ratio /= 1.1
-                    else:
-                        break
-                    # print(_mach, dydx)
-            else:
-                _xx = 0.0
-                _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
+        # two Characteristic line origins from both side, and find the intersection point
+        if tw in ['wall']:
+            npoint = calc_throat_point(_yy[ir], rline, True, mode, rUp, p, t, mT, lmmax, lmmin)
+            rline.append(npoint)
 
-            point.set_by_total(tta=_theta, ma=_mach, pt=p, tt=t)
+            if len(lline) >= (n-(ir-1)+1) and (rline[ir-1].x - lline[n-(ir-1)].x) * (rline[ir] - lline[n-ir]) <= 0.0:
+                cpoint = calc_interior_point(rline[ir-1], lline[n-ir])
+                lline = lline[:(n-ir)+1] + [cpoint]
+                rline = rline[:(ir-1)+1] + [cpoint]
+                break
             
-        elif mode in ['static']:
-            _theta = 0.0
-            _mach  = mT
-            if i > 0:
-                _xx = _xx_old + (_yy - _yy_old) / dydx
-            else:
-                _xx = 0.0
+            ir += 1
 
-            point.set_by_static(tta=0.0, ma=mT, p=p, t=t)
+        if tc in ['wall']:
+            npoint = calc_throat_point(_yy[il], lline, False, mode, rUp, p, t, mT, lmmax, lmmin)
+            lline.append(npoint)
 
+            if len(rline) >= ((il+1)+1) and (rline[il].x - lline[n-il].x) * (rline[il+1].x - lline[n-(il+1)].x) <= 0.0:
+                # left line intersect into existing left line
+                cpoint = calc_interior_point(rline[il], lline[n-(il+1)])
+                lline = lline[:(n-(il+1))+1] + [cpoint]
+                rline = rline[:il        +1] + [cpoint]
+                break
+
+            il -= 1
+
+    for ip in lline + rline:
+        ip.x = (yw0 - yc0) * ip.x
+        ip.y = (yw0 - yc0) * ip.y + yc0
+
+    plt.plot([ip.x for ip in rline], [ip.y for ip in rline], '-x', c='b')
+    plt.plot([ip.x for ip in lline], [ip.y for ip in lline], '-x', c='r')
+
+    return rline, lline
+
+def calc_throat_point(_yy: float, last_line: List[Node], dirc: bool,
+                         mode: str, rUp: float, p: float, t: float, mT: float, 
+                         lmmax: float, lmmin: float) -> Node:
+
+    if len(last_line) > 0:
+        _xx_old = last_line[-1].x
+        _yy_old = last_line[-1].y
+        if dirc:
+            dydx = last_line[-1].lam_minus   # this calculates a new X first assumed it falls on the RRC
         else:
-            raise KeySelectError('initial line mode', mode)
+            dydx = last_line[-1].lam_plus
+    
+    _mach = 0.0
+    point = Node()
+    
+    if mode in ['total']:
+        ratio = 1.0
+        if len(last_line) > 0:
+            while ratio >= 1.0:
+                _xx = _xx_old + (_yy - _yy_old) / (dydx * ratio)
+                _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
+                # increase dydx so that slope is 1.1 of what is was, only when mach number exceed 1.5
+                # this is to prevent the initial line is too steep and lead to solution failure
+                if _mach > lmmax:
+                    ratio *= 1.1
+                elif _mach < lmmin:
+                    ratio /= 1.1
+                else:
+                    break
+                # print(_mach, dydx)
+        else:
+            _xx = 0.0
+            _theta, _mach = KLThroat(_xx, _yy, point.g, rUp)
+
+        point.set_by_total(tta=_theta, ma=_mach, pt=p, tt=t)
         
-        point.x = (yw0 - yc0) * _xx
-        point.y = (yw0 - yc0) * _yy + yc0
+    elif mode in ['static']:
+        _theta = 0.0
+        _mach  = mT
+        if len(last_line) > 0:
+            _xx = _xx_old + (_yy - _yy_old) / dydx
+        else:
+            _xx = 0.0
 
-        if point.ma < 1.0:
-            raise SubsonicError(point.x, point.y, info="Calculated Throat Mach number < 1.0 at CalcInitialThroatLine")
+        point.set_by_static(tta=0.0, ma=mT, p=p, t=t)
 
-        _xx_old = _xx
-        _yy_old = _yy
-        # print(i, _theta, _mach)
-        _init_line.append(point)
+    else:
+        raise KeySelectError('initial line mode', mode)
 
-    plt.plot([ip.x for ip in _init_line], [ip.y for ip in _init_line], '-x', c='r')
+    if point.ma < 1.0:
+        raise SubsonicError(point.x, point.y, info="Calculated Throat Mach number < 1.0 at CalcInitialThroatLine")
 
-    return _init_line
-                
+    point.x = _xx
+    point.y = _yy
+
+    # print(i, _theta, _mach)
+    return point
+
+
 def KLThroat(x: float, y: float, G: float, RS: float) -> None:
     '''
     adapted from `int MOC_GridCalc::KLThroat(int i, int geom, double RS)` <- MOC_GidCalc_BDE <- the MOC programma of NASA
@@ -588,17 +695,17 @@ def calc_chara_line(last_line: List[Node], _xw: float, _yw: float, _dydxw: float
         new_line.append(new_node)
 
     sym_node = calc_sym_point(new_line[-1], last_line[-1])
-    
+
     new_line += [sym_node]
     return new_line
 
-def calc_shock_line(lines: List[List[Node]], xw: float, yw: float, dydxw: float) -> List[ShockNode]:
+def calc_shock_line(_lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
 
     # calculate shock node on the initial point (A.)
-    wall_point, _i = calc_wall_point(xw, yw, dydxw, lines[-1])
+    wall_point, _i = calc_shock_wall_point(_xw, _yw, _dydxw1, _dydxw2, _lines[-1])
     new_line = [wall_point]
 
-    pass
+    raise NotImplementedError()
 
 
 if __name__ == '__main__':
@@ -616,7 +723,7 @@ if __name__ == '__main__':
     # upperwall.plot()
 
     # init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
-    init_line = calc_initial_throat_line(n, 2.0, mode='total', rUp=9., p=2015., t=2726.)
+    init_line, _ = calc_initial_throat_line(n, 2.0, mode='total', rUp=9., p=2015., t=2726.)
     # plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o', c='k')
     # plt.plot([pt.x for pt in init_line], [pt.ma for pt in init_line], '-o')
     # plt.show()
