@@ -15,6 +15,13 @@ GEOM = 0
 GAS_R = 1.4
 BIG_NUMBER = 100000.
 
+WALLTYP = ['wall']
+SYMTYP  = ['sym']
+UPP = ['u', 'upper']
+LOW = ['l', 'lower']
+LEFTRC = +1
+RIGHTRC = -1
+
 class ExtrapolateError(Exception):
     pass
 
@@ -137,17 +144,25 @@ class Node(BasicNode):
         '''
         return math.asin(1. / self.ma)
     
+    # TODO: lam_plus and lam_minus should be closed to lam()
+    def lam(self, dirc: int) -> float:
+        '''
+        calculate the characteristic angle for Characteristic from this node(positive)
+        (dirc = positive 1 for left running; dirc = negative 1 for right runing)
+        '''
+        return math.tan(self.tta + dirc * self.alp)
+
     @property
     def lam_plus(self) -> float:
         '''
-        calculate the characteristic angle for Left Runing Characteristic from this node(positive)
+        calculate the characteristic angle for Left Runing Characteristic from this node (positive)
         '''
         return math.tan(self.tta + self.alp)
 
     @property
     def lam_minus(self) -> float:
         '''
-        calculate the characteristic angle for Left Runing Characteristic from this node(positive)
+        calculate the characteristic angle for Left Runing Characteristic from this node(negative)
         '''
         return math.tan(self.tta - self.alp)
 
@@ -381,7 +396,7 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
 
     return p4
 
-def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or ShockNode]) -> Tuple[Node, int]:
+def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or ShockNode], dirc: int) -> Tuple[Node, int]:
     
     p4  =  Node(xx, yy)
     p4.tta = math.atan(dydx)
@@ -389,7 +404,7 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or S
     llidx = 0   # node index on the last rrc line
 
     while llidx < len(last_line) - 1:
-       
+    
         _p5 = copy.deepcopy(last_line[llidx])
         # remind that only can the last point of the last rrc line be a ShockNode
         if isinstance(last_line[llidx + 1], ShockNode):
@@ -405,7 +420,7 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or S
                 ratio_old = ratio
                 p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
                 p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
-                ratio = _calc_p3_xy(_p3.x, _p3.y, _p5.x, _p5.y, p4.x, p4.y, p2.lam_plus)
+                ratio = _calc_p3_xy(_p3.x, _p3.y, _p5.x, _p5.y, p4.x, p4.y, p2.lam(-dirc))
                 if ratio > 1.0 or ratio < 0.0: raise ExtrapolateError()
             break
         except ExtrapolateError:
@@ -421,30 +436,42 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or S
             raise NotImplementedError()
 
     _p2 = copy.deepcopy(p2)
-    _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
+    if dirc == RIGHTRC:
+        _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
+    else:
+        _calc_boundary_p4_vals(_p3, p4, _p1=_p2)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
     _p3.vals = 0.5 * (_p3.vals + p4.vals)
-    _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
+    if dirc == RIGHTRC:
+        _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
+    else:
+        _calc_boundary_p4_vals(_p3, p4, _p1=_p2)
 
     plt.plot([last_line[0].x, p4.x], [last_line[0].y, p4.y], '-', c='k')
     plt.plot([p2.x,           p4.x], [p2.y,           p4.y], '-', c='r')
 
     return p4, llidx
 
-def calc_sym_point(p1: Node, p3: Node) -> Node:
+def calc_sym_point(p1: Node, p3: Node, dirc: int) -> Node:
 
     p4 = Node()
     _p1 = copy.deepcopy(p1)
     _p3 = copy.deepcopy(p3)
 
-    p4.y = 0.0
-    p4.x = p1.x + (p4.y - p1.y) / p1.lam_minus 
+    p4.y = 0.0  # TODO
+    p4.x = p1.x + (p4.y - p1.y) / p1.lam(dirc)
 
     p4.tta = 0.0
     
-    _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
+    if dirc == RIGHTRC:
+        _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
+    else:
+        _calc_boundary_p4_vals(_p3, p4, _p2=_p1)
     _p1.vals = 0.5 * (_p1.vals + p4.vals)
-    _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
+    if dirc == RIGHTRC:
+        _calc_boundary_p4_vals(_p3, p4, _p1=_p1)
+    else:
+        _calc_boundary_p4_vals(_p3, p4, _p2=_p1)
 
     plt.plot([p3.x, p4.x], [p3.y, p4.y], '--', c='k')
     plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='b')
@@ -492,89 +519,15 @@ def calc_shock_interior_point(p0: ShockNode, p2: Node) -> ShockNode:
     pass
 
 
-def calc_initial_throat_line(n: int, yw0: float, tw: str = 'wall', yc0: float = 0.0, tc: str = 'sym',
-             mode: str = 'total', rUp: float = 0.0, p: float = 0.0, t: float = 0.0, mT: float = 0.0,
-             **para: Dict) -> Tuple[List[Node], List[Node]]:
-    '''
-    This function is interpreted from code of CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
-    '''
-    
-    if 'LineMaMax' in para.keys():
-        lmmax = para['lineMaMax']
-    else:
-        lmmax = 1.5
-    if 'LineMaMin' in para.keys():
-        lmmin = para['lineMaMin']
-    else:
-        lmmin = 1.01
-    
-    rline: List[Node] = []
-    lline: List[Node] = []
-
-    # determine the y-dirction points, input yy should be non-dimensional
-    if 'InitPointsDistri' in para.keys():
-        if para['InitPointsDistri'] in ['equal']:
-            _yy = (n - np.arange(n + 1)) / n
-        elif para['InitPointsDistri'] in ['sin']:
-            pows =  1.5
-            _yy = np.sin(math.pi * (n - np.arange(n + 1)) / n / 2.)**pows
-            # Based on the way it is done in RAO, the y[i] is based on a sinusoidal
-            # and x[i] is assumed to be on the RRC from the throat wall
-        else:
-            raise KeySelectError('InitPointsDistri', para['InitPointsDistri'])
-    else:
-        _yy = (n - np.arange(n + 1)) / n
-
-    ir = 0
-    il = n
-    while ir <= n and il >= 0:
-
-        # two Characteristic line origins from both side, and find the intersection point
-        if tw in ['wall']:
-            npoint = calc_throat_point(_yy[ir], rline, True, mode, rUp, p, t, mT, lmmax, lmmin)
-            rline.append(npoint)
-
-            if len(lline) >= (n-(ir-1)+1) and (rline[ir-1].x - lline[n-(ir-1)].x) * (rline[ir] - lline[n-ir]) <= 0.0:
-                cpoint = calc_interior_point(rline[ir-1], lline[n-ir])
-                lline = lline[:(n-ir)+1] + [cpoint]
-                rline = rline[:(ir-1)+1] + [cpoint]
-                break
-            
-            ir += 1
-
-        if tc in ['wall']:
-            npoint = calc_throat_point(_yy[il], lline, False, mode, rUp, p, t, mT, lmmax, lmmin)
-            lline.append(npoint)
-
-            if len(rline) >= ((il+1)+1) and (rline[il].x - lline[n-il].x) * (rline[il+1].x - lline[n-(il+1)].x) <= 0.0:
-                # left line intersect into existing left line
-                cpoint = calc_interior_point(rline[il], lline[n-(il+1)])
-                lline = lline[:(n-(il+1))+1] + [cpoint]
-                rline = rline[:il        +1] + [cpoint]
-                break
-
-            il -= 1
-
-    for ip in lline + rline:
-        ip.x = (yw0 - yc0) * ip.x
-        ip.y = (yw0 - yc0) * ip.y + yc0
-
-    plt.plot([ip.x for ip in rline], [ip.y for ip in rline], '-x', c='b')
-    plt.plot([ip.x for ip in lline], [ip.y for ip in lline], '-x', c='r')
-
-    return rline, lline
-
-def calc_throat_point(_yy: float, last_line: List[Node], dirc: bool,
-                         mode: str, rUp: float, p: float, t: float, mT: float, 
-                         lmmax: float, lmmin: float) -> Node:
+def calc_throat_point(_yy: float, last_line: List[Node],
+                        mode: str, rUp: float, p: float, t: float, mT: float, 
+                        lmmax: float, lmmin: float) -> Node:
 
     if len(last_line) > 0:
         _xx_old = last_line[-1].x
         _yy_old = last_line[-1].y
-        if dirc:
-            dydx = last_line[-1].lam_minus   # this calculates a new X first assumed it falls on the RRC
-        else:
-            dydx = last_line[-1].lam_plus
+        dydx = last_line[-1].lam_minus   # this calculates a new X first assumed it falls on the RRC
+
     
     _mach = 0.0
     point = Node()
@@ -621,7 +574,6 @@ def calc_throat_point(_yy: float, last_line: List[Node], dirc: bool,
 
     # print(i, _theta, _mach)
     return point
-
 
 def KLThroat(x: float, y: float, G: float, RS: float) -> None:
     '''
@@ -684,28 +636,196 @@ def KLThroat(x: float, y: float, G: float, RS: float) -> None:
 
     return _theta, _ma
 
-def calc_chara_line(last_line: List[Node], _xw: float, _yw: float, _dydxw: float) -> List[Node]:
 
-    # boundary (wall)
-    wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, last_line)
-    new_line = [wall_point]
+class MOC2D():
+    '''
+    main class
+    '''
 
-    for _ii in range(_i + 1, len(last_line)):
-        new_node = calc_interior_point(new_line[-1], last_line[_ii])
-        new_line.append(new_node)
+    def __init__(self) -> None:
+        self.utyp: str = None
+        self.ltyp: str = None
+        self.uy0 = 1.0
+        self.ly0 = 0.0
+        self.upoints: WallPoints = None
+        self.lpoints: WallPoints = None
+        self.urUp = 0.0
+        self.lrUp = 0.0
 
-    sym_node = calc_sym_point(new_line[-1], last_line[-1])
+        self.rrcs: List[List[Node]] = []
+        self.lrcs: List[List[Node]] = []
 
-    new_line += [sym_node]
-    return new_line
+    def set_boundary(self, side: str, typ: str, y0: float, points: WallPoints = None, rUp: float = 0.0) -> None:
 
-def calc_shock_line(_lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
+        if side in UPP:
+            self.utyp = typ
+            self.uy0  = y0
+            self.upoints = points
+            self.urUp = rUp
+        elif side in LOW:
+            self.ltyp = typ
+            self.ly0  = y0
+            self.lpoints = points 
+            self.lrUp = rUp           
 
-    # calculate shock node on the initial point (A.)
-    wall_point, _i = calc_shock_wall_point(_xw, _yw, _dydxw1, _dydxw2, _lines[-1])
-    new_line = [wall_point]
+    def _dimen(self, ip: Node, dirc: int) -> Node:
+        
+        newp = copy.deepcopy(ip)
+        newp.x = (self.uy0 - self.ly0) * ip.x
+        if dirc == RIGHTRC:
+            newp.y = self.ly0 + (self.uy0 - self.ly0) * ip.y
+        else:
+            newp.y = self.uy0 - (self.uy0 - self.ly0) * ip.y
+            newp.tta = -ip.tta
 
-    raise NotImplementedError()
+        return newp
+
+
+    def calc_initial_throat_line(self, n: int, mode: str = 'total', p: float = 0.0, t: float = 0.0, mT: float = 0.0,
+                **para: Dict):
+        '''
+        This function is interpreted from code of CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
+        '''
+        
+        if 'LineMaMax' in para.keys():
+            lmmax = para['lineMaMax']
+        else:
+            lmmax = 1.5
+        if 'LineMaMin' in para.keys():
+            lmmin = para['lineMaMin']
+        else:
+            lmmin = 1.01
+        
+        rline: List[Node] = []
+        lline: List[Node] = []
+        nrline: List[Node] = []
+        nlline: List[Node] = []
+
+        # determine the y-dirction points, input yy should be non-dimensional
+        if 'InitPointsDistri' in para.keys():
+            if para['InitPointsDistri'] in ['equal']:
+                _yy = (n - np.arange(n + 1)) / n
+            elif para['InitPointsDistri'] in ['sin']:
+                pows =  1.5
+                _yy = np.sin(math.pi * (n - np.arange(n + 1)) / n / 2.)**pows
+                # Based on the way it is done in RAO, the y[i] is based on a sinusoidal
+                # and x[i] is assumed to be on the RRC from the throat wall
+            else:
+                raise KeySelectError('InitPointsDistri', para['InitPointsDistri'])
+        else:
+            _yy = (n - np.arange(n + 1)) / n
+
+        ir = 0
+        il = n
+        while ir <= n and il >= 0:
+
+            # two Characteristic line origins from both side, and find the intersection point
+            if self.utyp in WALLTYP:
+                npoint = calc_throat_point(_yy[ir], nrline, mode, self.urUp, p, t, mT, lmmax, lmmin)
+                nrline.append(npoint)
+                rline.append(self._dimen(npoint, RIGHTRC))
+
+                if len(lline) >= (n-(ir-1)+1) and (rline[ir-1].x - lline[n-(ir-1)].x) * (rline[ir] - lline[n-ir]) <= 0.0:
+                    cpoint = calc_interior_point(rline[ir-1], lline[n-ir])
+                    lline = lline[:(n-ir)+1] + [cpoint]
+                    rline = rline[:(ir-1)+1] + [cpoint]
+                    break
+                
+                ir += 1
+
+            if self.ltyp in WALLTYP:
+                npoint = calc_throat_point(1.-_yy[il], nlline, mode, self.lrUp, p, t, mT, lmmax, lmmin)
+                nlline.append(npoint)
+                lline.append(self._dimen(npoint, LEFTRC))
+
+                if len(rline) >= ((il+1)+1) and (rline[il].x - lline[n-il].x) * (rline[il+1].x - lline[n-(il+1)].x) <= 0.0:
+                    # left line intersect into existing left line
+                    cpoint = calc_interior_point(rline[il], lline[n-(il+1)])
+                    lline = lline[:(n-(il+1))+1] + [cpoint]
+                    rline = rline[:il        +1] + [cpoint]
+                    break
+
+                il -= 1
+
+        plt.plot([ip.x for ip in rline], [ip.y for ip in rline], '-x', c='b')
+        plt.plot([ip.x for ip in lline], [ip.y for ip in lline], '-x', c='r')
+
+        self.lrcs.append(lline)
+        self.rrcs.append(rline)
+
+    def calc_chara_line(self):
+
+        newrrc: List[Node] = []
+        newlrc: List[Node] = []
+
+        # upper wall
+        if self.utyp in WALLTYP:
+            try:
+                lastrrc = self.rrcs[-1]
+                _xw, _yw, _dydxw = next(self.upoints)
+                wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, lastrrc, dirc=RIGHTRC)
+                newrrc.append(wall_point)
+                
+                # calculate interior points amount = (N_lastline - 1)
+                for _ii in range(_i + 1, len(lastrrc)):
+                    newrrc.append(calc_interior_point(newrrc[-1], lastrrc[_ii]))
+
+                if self.ltyp in SYMTYP:
+                    # print(len(newrrc), len(lastrrc))
+                    newrrc.append(calc_sym_point(newrrc[-1], lastrrc[-1], dirc=RIGHTRC))
+
+            except EndofwallError:
+                pass
+        
+        if self.ltyp in WALLTYP:
+            try:
+                lastlrc = self.lrcs[-1]
+                _xw, _yw, _dydxw = next(self.lpoints)
+                wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, lastlrc, dirc=LEFTRC)
+                newlrc.append(wall_point)
+                
+                # calculate interior points amount = (N_lastline - 1)
+                for _ii in range(_i + 1, len(lastlrc)):
+                    newlrc.append(calc_interior_point(lastlrc[_ii], newlrc[-1]))
+
+                if self.utyp in SYMTYP:
+                    # print(len(newrrc), len(lastrrc))
+                    newlrc.append(calc_sym_point(newlrc[-1], lastlrc[-1], dirc=LEFTRC))
+
+            except EndofwallError:
+                pass
+
+        if len(newlrc) > 0 and len(newrrc) > 0:
+            cpoint = calc_interior_point(newrrc[-1], newlrc[-1])
+            newlrc.append(cpoint)
+            newrrc.append(cpoint)
+
+        self.lrcs.append(newlrc)
+        self.rrcs.append(newrrc)
+
+    def solve(self, max_step: int = 100000):
+        
+        step = 0
+
+        while step < max_step and (len(self.lrcs[-1]) > 0 or len(self.rrcs[-1]) > 0):
+
+            self.calc_chara_line()
+            step += 1
+
+    def plot_wall(self, side, var='p'):
+        if side in UPP: 
+            plt.plot(range(len(self.rrcs[:-1])), [l[0].p for l in self.rrcs[:-1]])
+        if side in LOW: 
+            plt.plot(range(len(self.lrcs[:-1])), [l[0].p for l in self.lrcs[:-1]])
+
+
+    def calc_shock_line(self, _lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
+
+        # calculate shock node on the initial point (A.)
+        wall_point, _i = calc_shock_wall_point(_xw, _yw, _dydxw1, _dydxw2, _lines[-1])
+        new_line = [wall_point]
+
+        raise NotImplementedError()
 
 
 if __name__ == '__main__':
@@ -722,39 +842,29 @@ if __name__ == '__main__':
     upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
     # upperwall.plot()
 
+    lowerwall = WallPoints()
+    lowerwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -8. + (6.**2 - x**2)**0.5)
+    lowerwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
+    
+    moc = MOC2D()
+    moc.set_boundary('u', typ='wall', y0=2.0, points=upperwall, rUp=9.)
+    # moc.set_boundary('l', typ='sym',  y0=0.0)
+    moc.set_boundary('l', typ='wall', y0=-2.0, points=lowerwall, rUp=9.)
+    # moc.set_boundary('u', typ='sym',  y0=0.0)
+
     # init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
-    init_line, _ = calc_initial_throat_line(n, 2.0, mode='total', rUp=9., p=2015., t=2726.)
+    moc.calc_initial_throat_line(n, mode='total', p=2015., t=2726.)
     # plt.plot([pt.x for pt in init_line], [pt.y for pt in init_line], '-o', c='k')
     # plt.plot([pt.x for pt in init_line], [pt.ma for pt in init_line], '-o')
     # plt.show()
 
-    lines = []
-    lines.append(init_line)
-
-    step = 0
-    max_step = 100
-
-    lastl = init_line
-
-    while len(lastl) > 0 and step < max_step:
-
-        try:
-            xw, yw, dydxw = next(upperwall)
-        except EndofwallError:
-            break
-        
-        newl = calc_chara_line(lastl, xw, yw, dydxw)
-        # calculate interior points amount = (N_lastline - 1)
-        
-        lastl = copy.deepcopy(newl)
-        lines.append(copy.deepcopy(newl))
-        # print(step, len(init_line))
-        step += 1
+    moc.solve(max_step=30)
 
     # plt.xlim(0,1)
     plt.show()
 
-    plt.plot(range(len(lines)), [lines[i][0].p for i in range(len(lines))])
+    moc.plot_wall(side='l')
+
     # plt.plot(range(10), [grid_points[i][0].vel for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].a   for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].alp / 3.14 * 180 for i in range(10)])
