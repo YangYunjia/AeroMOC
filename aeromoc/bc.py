@@ -48,10 +48,17 @@ class WallPoints():
             self.yy = _yy
             self.dydx = _dydx
         else:
-            self.xx   = np.concatenate((self.xx,   _xx[1:]), axis=0)
-            self.yy   = np.concatenate((self.yy,   _yy[1:]), axis=0)
-            self.dydx = np.concatenate((self.dydx, _dydx[1:]), axis=0)
-            
+            self.xx   = np.concatenate((self.xx,     _xx[min(1, len(xx)-1):]), axis=0)
+            self.yy   = np.concatenate((self.yy,     _yy[min(1, len(xx)-1):]), axis=0)
+            self.dydx = np.concatenate((self.dydx, _dydx[min(1, len(xx)-1):]), axis=0)
+    
+    def del_section(self, n: int) -> None:
+        self.step = min(self.step, len(self.xx) - n)
+        self.xx = self.xx[:-n]
+        self.yy = self.yy[:-n]
+        self.dydx = self.dydx[:-n]
+        
+
     def plot(self):
 
         plt.figure(0)

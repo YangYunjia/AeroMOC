@@ -213,7 +213,7 @@ class ShockNode(BasicNode):
             raise SubsonicError(self.cors, info='Subsonic (Ma2 = %.4f) after oblique shoch wave' % _mach2)
 
 def same_node(p1: Node, p2: Node) -> bool:
-    if ((p1.x - p2.x)**2 + (p1.y - p2.y)**2) < 1e-6:
+    if ((p1.x - p2.x)**2 + (p1.y - p2.y)**2) < 1e-10:
         return True
     else:
         return False

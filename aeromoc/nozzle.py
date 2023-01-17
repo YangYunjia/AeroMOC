@@ -124,3 +124,5 @@ def KLThroat(x: float, y: float, G: float, RS: float) -> None:
     #     raise ValueError("Intial Data Line is subsonic, try increasing Initial Line Angle")
 
     return _theta, _ma
+
+

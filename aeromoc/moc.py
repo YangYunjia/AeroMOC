@@ -14,7 +14,7 @@ from typing import Tuple, List, Dict, Callable
 from .utils import *
 from .node import Node, ShockNode, same_node
 from .bc import WallPoints
-from .basic import calc_interior_point, calc_wall_point, calc_sym_point, calc_shock_wall_point
+from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point
 from .nozzle import calc_throat_point
 
 
@@ -133,66 +133,57 @@ class MOC2D():
         self.lrcs.append(lline)
         self.rrcs.append(rline)
 
-    def calc_chara_line(self):
-
-        newrrc: List[Node] = []
-        newlrc: List[Node] = []
-
-        # upper wall
-        if self.utyp in WALLTYP:
-            try:
-                lastrrc = self.rrcs[-1]
-                _xw, _yw, _dydxw = next(self.upoints)
-                wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, lastrrc, dirc=RIGHTRC)
-                newrrc.append(wall_point)
-                
-                # calculate interior points amount = (N_lastline - 1)
-                for _ii in range(_i + 1, len(lastrrc)):
-                    newrrc.append(calc_interior_point(newrrc[-1], lastrrc[_ii]))
-
-                if self.ltyp in SYMTYP:
-                    # print(len(newrrc), len(lastrrc))
-                    newrrc.append(calc_sym_point(newrrc[-1], lastrrc[-1], dirc=RIGHTRC))
-
-            except EndofwallError:
-                pass
-        
-        if self.ltyp in WALLTYP:
-            try:
-                lastlrc = self.lrcs[-1]
-                _xw, _yw, _dydxw = next(self.lpoints)
-                wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, lastlrc, dirc=LEFTRC)
-                newlrc.append(wall_point)
-                
-                # calculate interior points amount = (N_lastline - 1)
-                for _ii in range(_i + 1, len(lastlrc)):
-                    newlrc.append(calc_interior_point(lastlrc[_ii], newlrc[-1]))
-
-                if self.utyp in SYMTYP:
-                    # print(len(newrrc), len(lastrrc))
-                    newlrc.append(calc_sym_point(newlrc[-1], lastlrc[-1], dirc=LEFTRC))
-
-            except EndofwallError:
-                pass
-
-        if len(newlrc) > 0 and len(newrrc) > 0:
-            cpoint = calc_interior_point(newrrc[-1], newlrc[-1])
-            newlrc.append(cpoint)
-            newrrc.append(cpoint)
-
-        self.lrcs.append(newlrc)
-        self.rrcs.append(newrrc)
-
     def solve(self, max_step: int = 100000):
         
         step = 0
 
-        while step < max_step and (len(self.lrcs[-1]) > 0 or len(self.rrcs[-1]) > 0):
+        while step < max_step:
 
-            self.calc_chara_line()
+            # upper wall
+            if self.utyp in WALLTYP:
+                try:
+                    lastrrc = self.rrcs[-1]
+                    _xw, _yw, _dydxw = next(self.upoints)
+                    newrrc = calc_charac_line(_xw, _yw, _dydxw, lastrrc, dirc=RIGHTRC)
+                    if self.ltyp in SYMTYP:
+                        newrrc.append(calc_sym_point(newrrc[-1], lastrrc[-1], dirc=RIGHTRC))
+                except EndofwallError:
+                    pass
+            # lower wall
+            if self.ltyp in WALLTYP:
+                try:
+                    lastlrc = self.lrcs[-1]
+                    _xw, _yw, _dydxw = next(self.lpoints)
+                    newlrc = calc_charac_line(_xw, _yw, _dydxw, lastlrc, dirc=LEFTRC)
+                    if self.utyp in SYMTYP:
+                        # print(len(newrrc), len(lastrrc))
+                        newlrc.append(calc_sym_point(newlrc[-1], lastlrc[-1], dirc=LEFTRC))
+                except EndofwallError:
+                    pass
+            # point on the center line
+            if len(newlrc) > 0 and len(newrrc) > 0:
+                cpoint = calc_interior_point(newrrc[-1], newlrc[-1])
+                newlrc.append(cpoint)
+                newrrc.append(cpoint)
+                self.lrcs.append(newlrc)
+                self.rrcs.append(newrrc)
+            
+            # if only left or right c.l. exist, add the last point as the end of the other side's c.l.
+            elif len(newlrc) > 0 and len(newrrc) <= 0:
+                self.lrcs.append(newlrc)
+                self.rrcs[-1].append(newlrc[-1])
+            elif len(newrrc) > 0 and len(newlrc) <= 0:
+                self.rrcs.append(newrrc)
+                self.lrcs[-1].append(newrrc[-1])
+            else:
+                break
             step += 1
         
         plt.show()
+
+    def clear(self):
+        self.rrcs = []
+        self.lrcs = []
 
     def plot_wall(self, side: str, var: str or List[str] = 'p', wtf: str = None):
         
@@ -244,9 +235,6 @@ class MOC2D():
                     f.write(' %18.9f' % writes[iv][i])
                 f.write('\n')
 
-
-
-
     def calc_shock_line(self, _lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
 
         # calculate shock node on the initial point (A.)
@@ -254,3 +242,96 @@ class MOC2D():
         new_line = [wall_point]
 
         raise NotImplementedError()
+
+
+class NOZZLE():
+    '''
+    main class for nozzle design
+    - ideal nozzle for asymmetric nozzle is refer to Mo. 2015 
+    '''
+
+    def __init__(self, method: str, pt: float, tt: float, patm: float, asym: float, rup: float, rlow: float) -> None:
+        self.kernal = MOC2D()
+        self.method = method
+
+        self.pt = pt
+        self.tt = tt
+        self.patm = patm
+        self.asym = asym    # should be 0~1
+        self.r = (rup, rlow)
+        self.delta = [0.0, 0.0]
+
+        self.g = 1.4
+
+    @property
+    def npr(self) -> float:
+        return self.pt / self.patm
+
+    def solve(self):
+        
+        nthroat = 11
+        narc = 15
+
+        # guess initial expansion angle
+        main = 1.01
+        maexit = (2./(self.g-1) * ((1 + (self.g-1) / 2. * main**2) * self.npr**(1. - 1. / self.g) - 1))**0.5
+        print(maexit)
+        deltaU = P_M(self.g, maexit) - P_M(self.g, main)
+        pg = 0.
+        ttag = 0.
+        rup, rlo = self.r
+
+        while abs(pg - self.patm) / self.patm > EPS:
+            
+            # solve the kernal zone
+            deltaL = self.asym * deltaU
+            print(pg, self.patm, ttag / DEG)
+            self.delta = [deltaU / DEG, deltaL / DEG]
+            print(self.delta)
+            
+            upperwall = WallPoints()
+            upperwall.add_section(rup * np.sin(np.linspace(0., deltaU, narc)), lambda x:  0.5 + rup - (rup**2 - x**2)**0.5)
+
+            lowerwall = WallPoints()
+            lowerwall.add_section(rlo * np.sin(np.linspace(0., deltaL, narc)), lambda x: -0.5 - rlo + (rlo**2 - x**2)**0.5)
+            
+            self.kernal.clear()
+            self.kernal.set_boundary('u', typ='wall', y0= 0.5, points=upperwall, rUp=rup)
+            self.kernal.set_boundary('l', typ='wall', y0=-0.5, points=lowerwall, rUp=rlo)
+            self.kernal.calc_initial_throat_line(nthroat, mode='total', p=self.pt, t=self.tt)
+            self.kernal.solve(max_step=500)
+
+            # solve LRCs of C-E to make thetaE = 0.
+            dx = rlo * math.sin(deltaL) / 5.
+
+            while True:
+                lowerwall.add_section(np.array([dx]), lambda x: -math.tan(deltaL) * x)
+                _xw, _yw, _dydxw = next(lowerwall)
+                newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
+                
+                if abs(newlrc[-1].tta) < EPS:
+                    # only add the last lrc to kernal
+                    self.kernal.lrcs.append(newlrc)
+                    self.kernal.rrcs[-1].append(newlrc[-1])
+                    break     
+
+                while newlrc[-1].tta < 0.:
+
+                    lowerwall.del_section(n=1)
+                    dx /= 2.
+                    lowerwall.add_section(np.array([dx]), lambda x: -math.tan(deltaL) * x)
+                    _xw, _yw, _dydxw = next(lowerwall)
+                    # lowerwall.plot()
+                    newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
+                    print(lowerwall.xx[-1], dx, newlrc[-1].tta)
+                
+                self.kernal.lrcs.append(newlrc)
+                self.kernal.rrcs[-1].append(newlrc[-1])
+
+            pg = self.kernal.lrcs[-1][0].p
+            ttag = self.kernal.lrcs[-1][0].tta
+            deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
+
+
+
+

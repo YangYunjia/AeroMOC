@@ -13,6 +13,7 @@ LOW = ['l', 'lower']
 LEFTRC = +1
 RIGHTRC = -1
 PI = math.pi
+DEG = math.pi / 180.
 EPS = 1e-3
 
 class ExtrapolateError(Exception):
@@ -38,3 +39,7 @@ def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> T
     t = tTotal / ratio
     rho = p / (GAS_R * t)
     return p, t, rho
+
+def P_M(g: float, ma: float) -> float:
+
+    return ((g+1) / (g-1))**0.5 * math.atan(((g-1) / (g+1)*(ma**2 - 1))**0.5) - math.atan(ma**2 - 1)

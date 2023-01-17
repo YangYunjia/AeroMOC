@@ -175,6 +175,21 @@ def calc_sym_point(p1: Node, p3: Node, dirc: int) -> Node:
 
     return p4
 
+def calc_charac_line(_xw: float, _yw: float, _dydxw: float, lastcl: List[Node], dirc: int) -> List[Node]:
+
+    newcl: List[Node] = []
+    wall_point, _i = calc_wall_point(_xw, _yw, _dydxw, lastcl, dirc=dirc)
+    newcl.append(wall_point)
+    
+    # calculate interior points amount = (N_lastline - 1)
+    for _ii in range(_i + 1, len(lastcl)):
+        if dirc == RIGHTRC:
+            newcl.append(calc_interior_point(newcl[-1], lastcl[_ii]))
+        else:
+            newcl.append(calc_interior_point(lastcl[_ii], newcl[-1]))
+
+    return newcl
+
 def calc_shock_wall_point(xx: float, yy: float, dydx1: float, dydx2: float, last_line: List[Node]) -> Tuple[ShockNode, int]:
     raise NotImplementedError()
     # wall_point, _i = calc_wall_point(xx, yy, dydx1, last_line)
