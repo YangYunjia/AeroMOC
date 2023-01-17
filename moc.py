@@ -725,7 +725,7 @@ class MOC2D():
                 nrline.append(npoint)
                 rline.append(self._dimen(npoint, RIGHTRC))
 
-                if len(lline) >= (n-(ir-1)+1) and (rline[ir-1].x - lline[n-(ir-1)].x) * (rline[ir] - lline[n-ir]) <= 0.0:
+                if len(lline) >= (n-(ir-1)+1) and (rline[ir-1].x - lline[n-(ir-1)].x) * (rline[ir].x - lline[n-ir].x) <= 0.0:
                     cpoint = calc_interior_point(rline[ir-1], lline[n-ir])
                     lline = lline[:(n-ir)+1] + [cpoint]
                     rline = rline[:(ir-1)+1] + [cpoint]
@@ -842,14 +842,16 @@ if __name__ == '__main__':
     upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
     # upperwall.plot()
 
+    ktta = 12.0
+
     lowerwall = WallPoints()
-    lowerwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -8. + (6.**2 - x**2)**0.5)
+    lowerwall.add_section(2 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (2.**2 - x**2)**0.5)
     lowerwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
     
     moc = MOC2D()
     moc.set_boundary('u', typ='wall', y0=2.0, points=upperwall, rUp=9.)
     # moc.set_boundary('l', typ='sym',  y0=0.0)
-    moc.set_boundary('l', typ='wall', y0=-2.0, points=lowerwall, rUp=9.)
+    moc.set_boundary('l', typ='wall', y0=-2.0, points=lowerwall, rUp=3.)
     # moc.set_boundary('u', typ='sym',  y0=0.0)
 
     # init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
