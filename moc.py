@@ -206,6 +206,10 @@ class Node(BasicNode):
         else:
             raise ValueError('Value for ma = %.3f is not correct' % _ma)
 
+    @property
+    def t(self) -> float:
+        return self.a**2 / self.g / GAS_R
+
 class ShockNode(BasicNode):
     
     def __init__(self, nodef: Node) -> None:
@@ -479,10 +483,11 @@ def calc_sym_point(p1: Node, p3: Node, dirc: int) -> Node:
     return p4
 
 def calc_shock_wall_point(xx: float, yy: float, dydx1: float, dydx2: float, last_line: List[Node]) -> Tuple[ShockNode, int]:
-    wall_point, _i = calc_wall_point(xx, yy, dydx1, last_line)
-    wall_node = ShockNode(nodef=wall_point)
-    wall_node.set_by_ttab(ttab=dydx2)
-    return wall_node, _i
+    raise NotImplementedError()
+    # wall_point, _i = calc_wall_point(xx, yy, dydx1, last_line)
+    # wall_node = ShockNode(nodef=wall_point)
+    # wall_node.set_by_ttab(ttab=dydx2)
+    # return wall_node, _i
 
 def calc_shock_interior_point(p0: ShockNode, p2: Node) -> ShockNode:
     
@@ -812,11 +817,57 @@ class MOC2D():
             self.calc_chara_line()
             step += 1
 
-    def plot_wall(self, side, var='p'):
-        if side in UPP: 
-            plt.plot(range(len(self.rrcs[:-1])), [l[0].p for l in self.rrcs[:-1]])
-        if side in LOW: 
-            plt.plot(range(len(self.lrcs[:-1])), [l[0].p for l in self.lrcs[:-1]])
+    def plot_wall(self, side: str, var: str or List[str] = 'p', wtf: str = None):
+        
+        flagw = False
+        writes = []
+
+        if isinstance(var, str):
+            var = [var]
+
+        if wtf is not None:
+            f = open(wtf, 'w')
+            flagw = True
+
+        if flagw: f.write('#moc\nVARIABLES X')
+        
+        for v in var:
+            if v not in dir(self.rrcs[0][0]):
+                print("variable '%s' not in dirctionary" % v)
+            
+            if flagw: f.write(' %s' % v)
+
+            plotx = []
+            ploty = []
+
+            if side in UPP: 
+                for l in self.rrcs:
+                    if len(l) > 0:
+                        plotx.append(l[0].x)
+                        ploty.append(l[0].__getattribute__(v))
+
+            if side in LOW: 
+                for l in self.lrcs:
+                    if len(l) > 0:
+                        plotx.append(l[0].x)
+                        ploty.append(l[0].__getattribute__(v))
+
+            writes.append(ploty)
+
+            plt.plot(plotx, ploty, label=v) 
+
+        plt.legend()
+        plt.show()
+
+        if flagw:
+            f.write('\nZONE=MOC, I=%d, F=POINT\n' % len(writes[0]))
+            for i in range(len(writes[0])):
+                f.write(' %18.9f' % plotx[i])
+                for iv in range(len(var)):
+                    f.write(' %18.9f' % writes[iv][i])
+                f.write('\n')
+
+
 
 
     def calc_shock_line(self, _lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
@@ -834,19 +885,18 @@ if __name__ == '__main__':
 
     n = 9
 
-    ktta = 8.0
+    kttau = 20.0
+    kttal = 12.0
     upperwall = WallPoints()
     # upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (6.**2 - x**2)**0.5)
     # upperwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
-    upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: 8. - (6.**2 - x**2)**0.5)
-    upperwall.add_section(np.linspace(0, 5, 12), lambda x: math.tan(math.pi / 180. * ktta) * x)
+    upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * kttau, 15)), lambda x: 8. - (6.**2 - x**2)**0.5)
+    upperwall.add_section(np.linspace(0, 5, 16), lambda x: math.tan(math.pi / 180. * kttau) * x)
     # upperwall.plot()
 
-    ktta = 12.0
-
     lowerwall = WallPoints()
-    lowerwall.add_section(2 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (2.**2 - x**2)**0.5)
-    lowerwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
+    lowerwall.add_section(2 * np.sin(np.linspace(0., math.pi / 180. * kttal, 15)), lambda x: -4. + (2.**2 - x**2)**0.5)
+    lowerwall.add_section(np.linspace(0, 5, 9), lambda x: -math.tan(math.pi / 180. * kttal) * x)
     
     moc = MOC2D()
     moc.set_boundary('u', typ='wall', y0=2.0, points=upperwall, rUp=9.)
@@ -860,15 +910,14 @@ if __name__ == '__main__':
     # plt.plot([pt.x for pt in init_line], [pt.ma for pt in init_line], '-o')
     # plt.show()
 
-    moc.solve(max_step=30)
+    moc.solve(max_step=50)
 
     # plt.xlim(0,1)
     plt.show()
 
-    moc.plot_wall(side='l')
+    moc.plot_wall(side='l', var=['p', 'ma', 't'], wtf='lower.dat')
 
     # plt.plot(range(10), [grid_points[i][0].vel for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].a   for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].alp / 3.14 * 180 for i in range(10)])
     # plt.plot(range(10), [grid_points[i][0].tta / 3.14 * 180 for i in range(10)])
-    plt.show()
