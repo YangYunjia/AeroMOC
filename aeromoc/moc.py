@@ -120,7 +120,7 @@ class MOC2D():
 
                 if len(rline) >= ((il+1)+1) and (rline[il].x - lline[n-il].x) * (rline[il+1].x - lline[n-(il+1)].x) <= 0.0:
                     # left line intersect into existing left line
-                    cpoint = calc_interior_point(rline[il], lline[n-(il+1)])
+                    cpoint, _ = calc_interior_point(rline[il], lline[n-(il+1)])
                     lline = lline[:(n-(il+1))+1] + [cpoint]
                     rline = rline[:il        +1] + [cpoint]
                     break
@@ -163,6 +163,7 @@ class MOC2D():
             # point on the center line
             if len(newlrc) > 0 and len(newrrc) > 0:
                 cpoint = calc_interior_point(newrrc[-1], newlrc[-1])
+
                 newlrc.append(cpoint)
                 newrrc.append(cpoint)
                 self.lrcs.append(newlrc)
@@ -301,7 +302,7 @@ class NOZZLE():
             self.kernal.calc_initial_throat_line(nthroat, mode='total', p=self.pt, t=self.tt)
             self.kernal.solve(max_step=500)
 
-            # solve LRCs of C-E to make thetaE = 0.
+            # solve LRCs of C-E to make thetaG = 0.
             dx = rlo * math.sin(deltaL) / 5.
 
             while True:
@@ -331,6 +332,8 @@ class NOZZLE():
             pg = self.kernal.lrcs[-1][0].p
             ttag = self.kernal.lrcs[-1][0].tta
             deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
+
+            # 
 
 
 

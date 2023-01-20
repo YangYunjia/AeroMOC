@@ -26,30 +26,63 @@ def _calc_p3_xy(p1x: float, p1y: float, p2x: float, p2y: float, p4x: float, p4y:
         # plt.show()
     return (p4y - p2y - p4tta * (p4x - p2x)) / (p1y - p2y - p4tta * (p1x - p2x))
 
+def _calc_p3_from_last_line(last_line: List[Node], llidx0: int, didx: int, p4x: float, p4y: float, p4tta: float) -> Tuple[Node, int]:
+
+    p3 = Node()
+
+    llidx = llidx0   # node index on the last rrc line
+
+    while llidx >= 0 and llidx < len(last_line) - 1:
+    
+        _p50 = last_line[llidx]
+        _p51 = last_line[llidx + 1]
+        ratio = _calc_p3_xy(_p50.x, _p50.y, _p51.x, _p51.y, p4x, p4y, p4tta)
+        if ratio < 1.0 and ratio >= 0.0:
+            break
+
+        llidx += didx
+
+    else:
+        raise ExtrapolateError()
+
+    p3.cors = _p51.cors + ratio * (_p50.cors - _p51.cors)
+    p3.vals = _p51.vals + ratio * (_p50.vals - _p51.vals)
+
+    return p3, llidx
+
 def _calc_p4_xy(p1x: float, p1y: float, p1tta: float, p2x: float, p2y: float, p2tta: float) -> Tuple[float, float]:
     p4x = ((p1y - p2y) - (p1tta * p1x - p2tta * p2x)) / (p2tta - p1tta)
     p4y = p2y + p2tta * (p4x - p2x)
     return p4x, p4y
 
-def _calc_p4_vals(_p1: Node, _p2: Node, _p4: Node) -> bool:
-    _p3 = Node()
+def _calc_p4_vals(_p1: Node, _p2: Node, _p4: Node, last_line: List[Node] = None, llidx: int = 0) -> int:
 
     T_plus  = _p2.Q * _p2.p + _p2.tta - _p2.S_plus  * (_p4.x - _p2.x)
     T_minus = _p1.Q * _p1.p - _p1.tta - _p1.S_minus * (_p4.x - _p1.x)
     _p4.p = (T_plus + T_minus) / (_p1.Q + _p2.Q)
     _p4.tta = T_plus - _p2.Q * _p4.p
 
-    # the ratio of point 3 on the line p1-p2 from p2
-    ratio = _calc_p3_xy(_p1.x, _p1.y, _p2.x, _p2.y, _p4.x, _p4.y, _p4.tta)
-
-    _p3.vals = _p2.vals + ratio * (_p1.vals - _p2.vals)
+    if last_line is None:
+        # the point 3 is obtained from p.1 and p.2
+        ratio = _calc_p3_xy(_p1.x, _p1.y, _p2.x, _p2.y, _p4.x, _p4.y, _p4.tta)        # the ratio of point 3 on the line p1-p2 from p2
+        _p3 = Node()
+        _p3.vals = _p2.vals + ratio * (_p1.vals - _p2.vals)
+    else:
+        _p3 = _calc_p3_from_last_line(last_line, llidx, -1, _p4.x, _p4.y, _p4.tta)
 
     _p4.vel = _p3.vel - (_p4.p - _p3.p) / (_p3.rho * _p3.vel)
     _p4.rho = _p3.rho + (_p4.p - _p3.p) / (_p3.a**2)
 
-    return True
+    return llidx
 
 def _calc_boundary_p4_vals(_p3: Node, _p4: Node, _p1: Node = None, _p2: Node = None) -> bool:
+    '''
+    Calculate the value for p4 from a characteristic line and a stream line
+
+        p3: the origin of the s.l, `vel` , `rho` should be known at p3\n
+        p4: the next interaction of c.l and s.l, the `x`, `y`, `tta` should be known at p4\n
+        p1(rrc) or p2(lrc): the origin of the c.l, all value should be known at p1 or p2
+    '''
     
     if _p1 is not None:
         T_minus = _p1.Q * _p1.p - _p1.tta - _p1.S_minus * (_p4.x - _p1.x)
@@ -65,9 +98,25 @@ def _calc_boundary_p4_vals(_p3: Node, _p4: Node, _p1: Node = None, _p2: Node = N
 
     return True
 
-def calc_interior_point(p1: Node, p2: Node) -> Node:
+def calc_interior_point(p1: Node, p2: Node, last_line: List[Node] = None, llidx: int = 0) -> Node or Tuple[Node, int]:
     '''
-    
+    calculate interior point location and values
+
+    paras:
+    ===
+    `p1`, `p2`:    the origins of the c.l, all values should be prescribed
+        it doesn't matter p4 get from p1, p2 by forward or backward
+
+    `last_line`:    (optional) when p4 is get from backward, the location of p4
+    is get from p1 and p2 by c.l, the rho, vel is get from find a p3 on the last
+    c.l. When `last_line` is prescribed, the code automatically see p4 as backward
+    and to find the p3 on the prescribed last c.l.
+
+    `llidx`:    (optional, default is 0) the idx on the last line to start search with
+
+    returns:
+    ==
+    (`p4`, `llidx`)
     '''
     _p1 = copy.deepcopy(p1)
     _p2 = copy.deepcopy(p2)
@@ -82,16 +131,20 @@ def calc_interior_point(p1: Node, p2: Node) -> Node:
         return p2
 
     # predict step
-    _calc_p4_vals(_p1, _p2, p4)
+    _ = _calc_p4_vals(_p1, _p2, p4, last_line=last_line, llidx=llidx)
     # correction step
     _p1.vals = 0.5 * (_p1.vals + p4.vals)
     _p2.vals = 0.5 * (_p2.vals + p4.vals)
-    _calc_p4_vals(_p1, _p2, p4)
+    _llidx = _calc_p4_vals(_p1, _p2, p4, last_line=last_line, llidx=llidx)
 
     plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='b')
     plt.plot([p2.x, p4.x], [p2.y, p4.y], '-', c='r')
 
-    return p4
+    if last_line is None:
+        return p4
+    else:
+        return p4, _llidx
+
 
 def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or ShockNode], dirc: int) -> Tuple[Node, int]:
     
@@ -124,7 +177,7 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or S
             llidx += 1
     
     else:
-        # when can find a interaction point between the lrc to the wall point, and the last rrc
+        # when can't find a interaction point between the lrc to the wall point, and the last rrc
         # two possible condition:
         #  - first: the last rrc is intercepted by an shock wave 
         #  - second: the solution is fail
@@ -174,6 +227,50 @@ def calc_sym_point(p1: Node, p3: Node, dirc: int) -> Node:
     plt.plot([p1.x, p4.x], [p1.y, p4.y], '-', c='b')
 
     return p4
+
+def calc_exitplane_point(xx: float, yy: float, extta: float, last_line: List[Node or ShockNode], dirc: int) -> Tuple[Node, int]:
+
+    p4  =  Node(xx, yy)
+    p4.tta = extta  # exit theta
+    _p2 = copy.deepcopy(last_line[-1])
+
+    p3, llidx = _calc_p3_from_last_line(last_line, len(last_line) - 2, -1, xx, yy, extta)
+    _p3 = copy.deepcopy(p3)
+
+    if dirc == LEFTRC:
+        _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
+    else:
+        _calc_boundary_p4_vals(_p3, p4, _p1=_p2)
+    _p2.vals = 0.5 * (_p2.vals + p4.vals)
+    _p3.vals = 0.5 * (_p3.vals + p4.vals)
+    if dirc == LEFTRC:
+        _calc_boundary_p4_vals(_p3, p4, _p2=_p2)
+    else:
+        _calc_boundary_p4_vals(_p3, p4, _p1=_p2)
+
+    plt.plot([_p3.x, p4.x], [_p3.y, p4.y], '--', c='k')
+    plt.plot([_p2.x, p4.x], [_p2.y, p4.y], '-', c='r')
+
+    return p4, llidx
+
+def calcback_charac_line(_xe: float, _ye: float, _extta: float, lastcl: List[Node], dirc:int):
+
+    newcl: List[Node] = []
+    exit_point, llidx = calc_exitplane_point(_xe, _ye, _extta, lastcl, dirc)
+    newcl.insert(0, exit_point)
+
+    try:
+        for _ii in range(len(lastcl[-1], 0, -1)):
+            if dirc == RIGHTRC:
+                newp, llidx = calc_interior_point(newcl[0], lastcl[_ii-1], lastcl, llidx)
+            else:
+                raise NotImplementedError()
+    except ExtrapolateError:
+        # point 3 is out of last c.l, which means point 4 beyond wall
+        raise NotImplementedError()
+
+
+
 
 def calc_charac_line(_xw: float, _yw: float, _dydxw: float, lastcl: List[Node], dirc: int) -> List[Node]:
 

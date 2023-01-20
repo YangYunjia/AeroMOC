@@ -33,7 +33,7 @@ if __name__ == '__main__':
     # init_line = calc_initial_throat_line(n, 2.0, mode='static', p=101325, t=283, mT=2.2)
     moc.calc_initial_throat_line(n, mode='total', p=2015., t=2726.)
 
-    moc.solve(max_step=50)
+    moc.solve(max_step=30)
 
 
     moc.plot_wall(side='u', var=['p', 'ma', 't'], wtf='upper.dat')
