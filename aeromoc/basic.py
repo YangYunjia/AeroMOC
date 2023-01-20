@@ -152,15 +152,17 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or S
     p4.tta = math.atan(dydx)
     p2 = Node()
     llidx = 0   # node index on the last rrc line
+    
+    _p3 = copy.deepcopy(last_line[0])
 
     while llidx < len(last_line) - 1:
-    
-        _p5 = copy.deepcopy(last_line[llidx])
+
+        _p50 = copy.deepcopy(last_line[llidx])
         # remind that only can the last point of the last rrc line be a ShockNode
         if isinstance(last_line[llidx + 1], ShockNode):
-            _p3 = copy.deepcopy(last_line[llidx + 1].nb)
+            _p51 = copy.deepcopy(last_line[llidx + 1].nb)
         else:
-            _p3 = copy.deepcopy(last_line[llidx + 1])
+            _p51 = copy.deepcopy(last_line[llidx + 1])
 
         ratio = 0.5
         ratio_old = 0.0
@@ -168,9 +170,9 @@ def calc_wall_point(xx: float, yy: float, dydx: float, last_line: List[Node or S
         try:
             while abs(ratio - ratio_old) > 1e-3:
                 ratio_old = ratio
-                p2.cors = _p5.cors + ratio * (_p3.cors - _p5.cors)
-                p2.vals = _p5.vals + ratio * (_p3.vals - _p5.vals)
-                ratio = _calc_p3_xy(_p3.x, _p3.y, _p5.x, _p5.y, p4.x, p4.y, p2.lam(-dirc))
+                p2.cors = _p51.cors + ratio * (_p50.cors - _p51.cors)
+                p2.vals = _p51.vals + ratio * (_p50.vals - _p51.vals)
+                ratio = _calc_p3_xy(_p50.x, _p50.y, _p51.x, _p51.y, p4.x, p4.y, p2.lam(-dirc))
                 if ratio > 1.0 or ratio < 0.0: raise ExtrapolateError()
             break
         except ExtrapolateError:
