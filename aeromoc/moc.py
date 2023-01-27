@@ -6,13 +6,14 @@ YangYunjia, 2023.1.3
 '''
 import math
 import copy
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 
 from typing import Tuple, List, Dict, Callable
 
 from .utils import *
-from .node import Node, ShockNode, same_node
+from .node import Node, ShockNode
 from .bc import WallPoints
 from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point, calcback_charac_line
 from .nozzle import calc_throat_point
@@ -120,24 +121,24 @@ class MOC2D():
 
                 if len(rline) >= ((il+1)+1) and (rline[il].x - lline[n-il].x) * (rline[il+1].x - lline[n-(il+1)].x) <= 0.0:
                     # left line intersect into existing left line
-                    cpoint, _ = calc_interior_point(rline[il], lline[n-(il+1)])
+                    cpoint = calc_interior_point(rline[il], lline[n-(il+1)])
                     lline = lline[:(n-(il+1))+1] + [cpoint]
                     rline = rline[:il        +1] + [cpoint]
                     break
 
                 il -= 1
 
-        plt.plot([ip.x for ip in rline], [ip.y for ip in rline], '-x', c='b')
-        plt.plot([ip.x for ip in lline], [ip.y for ip in lline], '-x', c='r')
-
         self.lrcs.append(lline)
         self.rrcs.append(rline)
 
     def solve(self, max_step: int = 100000):
-        
+        t1 = time.time()
         step = 0
 
         while step < max_step:
+
+            newlrc: List[Node] = []
+            newrrc: List[Node] = []
 
             # upper wall
             if self.utyp in WALLTYP:
@@ -180,7 +181,8 @@ class MOC2D():
                 break
             step += 1
         
-        plt.show()
+        t2 = time.time()
+        print('Solve done in %.3f s' % (t2 - t1))
 
     def clear(self):
         self.rrcs = []
@@ -236,6 +238,24 @@ class MOC2D():
                     f.write(' %18.9f' % writes[iv][i])
                 f.write('\n')
 
+    def plot_field(self):
+        plt.figure(100)
+        #* initline
+        # plt.plot([ip.x for ip in self.rrcs[0]], [ip.y for ip in self.rrcs[0]], '-x', c='b')
+        # plt.plot([ip.x for ip in self.lrcs[0]], [ip.y for ip in self.lrcs[0]], '-x', c='r')
+
+        for line in self.lrcs + self.rrcs:
+            for nd in line:
+                if nd.streamnode is not None:
+                    plt.plot([nd.streamnode.x, nd.x], [nd.streamnode.y, nd.y], '-', c='k')
+                if nd.leftnode is not None:
+                    plt.plot([nd.leftnode.x, nd.x], [nd.leftnode.y, nd.y], '-', c='r')
+                if nd.rightnode is not None:
+                    plt.plot([nd.rightnode.x, nd.x], [nd.rightnode.y, nd.y], '-', c='b')
+        # plt.show()
+        return plt
+
+
     def calc_shock_line(self, _lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
 
         # calculate shock node on the initial point (A.)
@@ -253,6 +273,8 @@ class NOZZLE():
 
     def __init__(self, method: str, pt: float, tt: float, patm: float, asym: float, rup: float, rlow: float) -> None:
         self.kernal = MOC2D()
+        self.expansion = MOC2D()
+
         self.method = method
 
         self.pt = pt
@@ -270,13 +292,13 @@ class NOZZLE():
 
     def solve(self):
         
-        nthroat = 11
+        nthroat = 21
         narc = 15
 
         # guess initial expansion angle
         main = 1.01
         maexit = (2./(self.g-1) * ((1 + (self.g-1) / 2. * main**2) * self.npr**(1. - 1. / self.g) - 1))**0.5
-        print(maexit)
+        # print(maexit)
         deltaU = P_M(self.g, maexit) - P_M(self.g, main)
         pg = 0.
         ttag = 0.
@@ -286,9 +308,8 @@ class NOZZLE():
             
             # solve the kernal zone to make pressure on G equal to patm
             deltaL = self.asym * deltaU
-            print(pg, self.patm, ttag / DEG)
             self.delta = [deltaU / DEG, deltaL / DEG]
-            print(self.delta)
+            # print(self.delta)
             
             upperwall = WallPoints()
             upperwall.add_section(rup * np.sin(np.linspace(0., deltaU, narc)), lambda x:  0.5 + rup - (rup**2 - x**2)**0.5)
@@ -300,21 +321,19 @@ class NOZZLE():
             self.kernal.set_boundary('u', typ='wall', y0= 0.5, points=upperwall, rUp=rup)
             self.kernal.set_boundary('l', typ='wall', y0=-0.5, points=lowerwall, rUp=rlo)
             self.kernal.calc_initial_throat_line(nthroat, mode='total', p=self.pt, t=self.tt)
-            self.kernal.solve(max_step=500)
+            self.kernal.solve(max_step=1000)
+
+            pg = self.kernal.lrcs[-1][-1].p
+            ttag = self.kernal.lrcs[-1][-1].tta
+            print(pg, ttag / DEG)
 
             # solve LRCs of C-E to make thetaG = 0.
             dx = rlo * math.sin(deltaL) / 5.
-
-            while True:
+            while abs(self.kernal.lrcs[-1][-1].tta) > EPS: 
+                
                 lowerwall.add_section(np.array([dx]), lambda x: -math.tan(deltaL) * x)
                 _xw, _yw, _dydxw = next(lowerwall)
                 newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
-                
-                if abs(newlrc[-1].tta) < EPS:
-                    # only add the last lrc to kernal
-                    self.kernal.lrcs.append(newlrc)
-                    self.kernal.rrcs[-1].append(newlrc[-1])
-                    break     
 
                 while newlrc[-1].tta < 0.:
 
@@ -324,27 +343,37 @@ class NOZZLE():
                     _xw, _yw, _dydxw = next(lowerwall)
                     # lowerwall.plot()
                     newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
-                    print(lowerwall.xx[-1], dx, newlrc[-1].tta)
+                    # print(lowerwall.xx[-1], dx, newlrc[-1].tta)
                 
                 self.kernal.lrcs.append(newlrc)
                 self.kernal.rrcs[-1].append(newlrc[-1])
+            
+            pg = self.kernal.lrcs[-1][-1].p
+            ttag = self.kernal.lrcs[-1][-1].tta
+            print(pg, self.patm, ttag / DEG)
 
-            pg = self.kernal.lrcs[-1][0].p
-            ttag = self.kernal.lrcs[-1][0].tta
             deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
+        
+            # plt100 = self.kernal.plot_field()
+            # plt100.show()
 
         #* solve wall contour
         expansion_dx = self.kernal.lrcs[-1][-1].x - self.kernal.lrcs[-1][-2].x
         old_ll = self.kernal.rrcs[-1]
 
-        expansion: List[List[Node]] = []
-        while True:
-            new_x = expansion_dx + old_ll[-1].x
-            new_y = expansion_dx * math.tan(old_ll[-1].lam_plus) + old_ll[-1].y
-            expansion.append(calcback_charac_line(new_x, new_y, 0.0, old_ll, RIGHTRC))
-            old_ll = expansion[-1]
+        # print(self.kernal.lrcs[-1][-1].lam_plus, self.kernal.lrcs[-1][-2].lam_plus, self.kernal.lrcs[-1][-3].lam_plus)
 
-            plt.show()
+        while len(old_ll) > 1:
+            new_x = expansion_dx + old_ll[-1].x
+            new_y = expansion_dx * old_ll[-1].lam_plus + old_ll[-1].y
+            newl = calcback_charac_line(new_x, new_y, 0.0, old_ll, RIGHTRC)
+            self.expansion.rrcs.append(newl)
+            old_ll = newl
+
+        plt100 = self.kernal.plot_field()
+        plt100 = self.expansion.plot_field().show()
+
+            
 
 
 

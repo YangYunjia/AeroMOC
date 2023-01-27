@@ -7,6 +7,10 @@ from typing import Tuple, List, Dict, Callable
 class BasicNode():
     def __init__(self) -> None:
         self.cors   = np.ones(2) * (-BIG_NUMBER)   # x, y
+        self.streamnode: BasicNode = None
+        self.leftnode: BasicNode = None
+        self.rightnode: BasicNode = None    # the origin of lrc and rrc, for ploting
+        self.showself: bool = False
 
     @property
     def x(self) -> float:
@@ -29,6 +33,15 @@ class BasicNode():
     @y.setter
     def y(self, value):
         self.cors[1] = value
+
+    def lastnode(self, n, dirc: int):
+        if dirc == LEFTRC:
+            self.leftnode = n
+        elif dirc == RIGHTRC:
+            self.rightnode = n
+        else:
+            self.streamnode = n
+        pass
 
 class Node(BasicNode):
 
