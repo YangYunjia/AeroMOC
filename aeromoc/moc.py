@@ -14,7 +14,7 @@ from typing import Tuple, List, Dict, Callable
 from .utils import *
 from .node import Node, ShockNode, same_node
 from .bc import WallPoints
-from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point
+from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point, calcback_charac_line
 from .nozzle import calc_throat_point
 
 
@@ -284,7 +284,7 @@ class NOZZLE():
 
         while abs(pg - self.patm) / self.patm > EPS:
             
-            # solve the kernal zone
+            # solve the kernal zone to make pressure on G equal to patm
             deltaL = self.asym * deltaU
             print(pg, self.patm, ttag / DEG)
             self.delta = [deltaU / DEG, deltaL / DEG]
@@ -333,7 +333,18 @@ class NOZZLE():
             ttag = self.kernal.lrcs[-1][0].tta
             deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
 
-            # 
+        #* solve wall contour
+        expansion_dx = self.kernal.lrcs[-1][-1].x - self.kernal.lrcs[-1][-2].x
+        old_ll = self.kernal.rrcs[-1]
+
+        expansion: List[List[Node]] = []
+        while True:
+            new_x = expansion_dx + old_ll[-1].x
+            new_y = expansion_dx * math.tan(old_ll[-1].lam_plus) + old_ll[-1].y
+            expansion.append(calcback_charac_line(new_x, new_y, 0.0, old_ll, RIGHTRC))
+            old_ll = expansion[-1]
+
+            plt.show()
 
 
 
