@@ -1,7 +1,12 @@
 '''
-MOC main function
+This is the main file of the pyMOC(AeroMOC) program. The program is initially developed
+by Yunjia Yang (yyj980401@126.com). It is also a option of the assignment of Prof. Yufei 
+Zhang's (zhangyufei@tsinghua.edu.cn) curriculum "Advanced Aerodynamics".
 
-YangYunjia, 2023.1.3
+The program is open to further development. Please follow the instruction to fork and raise
+pull request.
+
+Yunjia Yang, Apr. 13, 2023
 
 '''
 import math
@@ -15,13 +20,17 @@ from typing import Tuple, List, Dict, Callable
 from .utils import *
 from .node import Node, ShockNode
 from .bc import WallPoints
-from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point, calcback_charac_line
-from .nozzle import calc_throat_point
+from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point, calcback_charac_line, calc_throat_point
 
 
 class MOC2D():
     '''
-    main class
+    This function is to calculate a supersonic flowfield use Method of Characteristic.
+
+    The solution zone is assigned by two boundary wall (upper and lower). The supersonic
+    flow enter the zone from left side (init_line), and propagate rightward.
+
+    The solution process is DIMENSIONAL.
     '''
 
     def __init__(self) -> None:
@@ -37,20 +46,43 @@ class MOC2D():
         self.rrcs: List[List[Node]] = []
         self.lrcs: List[List[Node]] = []
 
-    def set_boundary(self, side: str, typ: str, y0: float, points: WallPoints = None, rUp: float = 0.0) -> None:
+    def set_boundary(self, side: str, typ: str, points: WallPoints = None, rUp: float = 0.0) -> None:
+        '''
+        This function is used to set the upper or lower boundary wall. The wall is depicted
+        by the class `WallPoints`.
 
+        ### para:
+        - side (= `UPP` or `LOW`) upper or lower side
+        - typ  (= `WALL` or `SYM`)
+        - points (`WallPoints`) a generator for wall points
+        - rUp  (float) upward radius (for nozzle's init_line)
+        
+        '''
         if side in UPP:
-            self.utyp = typ
-            self.uy0  = y0
-            self.upoints = points
-            self.urUp = rUp
+            self.utyp = typ         # upper boundary type (wall or sym)
+            self.upoints = points   # the `WallPoint` class of upper 
+            self.urUp = rUp         # upward radius
+            self.uy0  = points[0][1]       
+
         elif side in LOW:
             self.ltyp = typ
-            self.ly0  = y0
             self.lpoints = points 
-            self.lrUp = rUp           
+            self.lrUp = rUp  
+            self.ly0  = points[0][1]
 
     def _dimen(self, ip: Node, dirc: int) -> Node:
+        '''
+        This function is used to dimensionalize points from initial line calculaiton.
+
+        Remark that it is ONLY used to above propose.
+
+        ### para:
+        - ip:   a point given by initial line calculation
+        - dirc: direction of characteristic line
+
+        ### return:
+        new dimensionalized point
+        '''
         
         newp = copy.deepcopy(ip)
         newp.x = (self.uy0 - self.ly0) * ip.x
@@ -65,7 +97,14 @@ class MOC2D():
     def calc_initial_throat_line(self, n: int, mode: str = 'total', p: float = 0.0, t: float = 0.0, mT: float = 0.0,
                 **para: Dict):
         '''
-        This function is interpreted from code of CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
+        This function is used to generate init_line
+
+        ### para:
+        - n (int)   amount of points on the initial line
+        - mode
+        
+        ### reference:
+        interpreted from CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
         '''
         
         if 'LineMaMax' in para.keys():
@@ -180,6 +219,13 @@ class MOC2D():
             else:
                 break
             step += 1
+
+            if SHOWSTEP:
+                plt00 = self.plot_field()
+                plt00.savefig('%.3f.png'% time.time())
+
+        if SHOWSTEP:
+            plt00.show()
         
         t2 = time.time()
         print('Solve done in %.3f s' % (t2 - t1))
@@ -239,6 +285,7 @@ class MOC2D():
                 f.write('\n')
 
     def plot_field(self):
+        return
         plt.figure(100)
         #* initline
         # plt.plot([ip.x for ip in self.rrcs[0]], [ip.y for ip in self.rrcs[0]], '-x', c='b')
@@ -344,14 +391,21 @@ class NOZZLE():
                     # lowerwall.plot()
                     newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
                     # print(lowerwall.xx[-1], dx, newlrc[-1].tta)
+                    if SHOWSTEP:
+                        plt00 = self.kernal.plot_field()
+                        plt00.savefig('%.3f.png'% time.time())
                 
                 self.kernal.lrcs.append(newlrc)
                 self.kernal.rrcs[-1].append(newlrc[-1])
+
+                if SHOWSTEP:
+                    plt00 = self.kernal.plot_field()
+                    plt00.savefig('%.3f.png'% time.time())
             
             pg = self.kernal.lrcs[-1][-1].p
             ttag = self.kernal.lrcs[-1][-1].tta
             print(pg, self.patm, ttag / DEG)
-
+            plt00.show()
             deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
         
             # plt100 = self.kernal.plot_field()
@@ -369,6 +423,12 @@ class NOZZLE():
             newl = calcback_charac_line(new_x, new_y, 0.0, old_ll, RIGHTRC)
             self.expansion.rrcs.append(newl)
             old_ll = newl
+
+            if SHOWSTEP:
+                plt00 = self.kernal.plot_field()
+                plt00 = self.expansion.plot_field()
+                plt00.savefig('%.3f.png'% time.time())
+
 
         plt100 = self.kernal.plot_field()
         plt100 = self.expansion.plot_field().show()

@@ -1,6 +1,8 @@
 # user defined
 verify/
 *.dat
+*.zip
+.DS_Store
 
 
 # Byte-compiled / optimized / DLL files
