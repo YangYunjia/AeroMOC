@@ -20,7 +20,7 @@ from typing import Tuple, List, Dict, Callable
 from .utils import *
 from .node import Node, ShockNode
 from .bc import WallPoints
-from .basic import calc_interior_point, calc_charac_line, calc_sym_point, calc_shock_wall_point, calcback_charac_line, calc_throat_point
+from .basic import calc_interior_point, calc_charac_line, calc_boundary_point, calc_shock_wall_point, calcback_charac_line, calc_throat_point
 
 
 class MOC2D():
@@ -40,13 +40,11 @@ class MOC2D():
         self.ly0 = 0.0
         self.upoints: WallPoints = None
         self.lpoints: WallPoints = None
-        self.urUp = 0.0
-        self.lrUp = 0.0
 
         self.rrcs: List[List[Node]] = []
         self.lrcs: List[List[Node]] = []
 
-    def set_boundary(self, side: str, typ: str, points: WallPoints = None, rUp: float = 0.0) -> None:
+    def set_boundary(self, side: str, typ: str, points: WallPoints = None, y0: int = None) -> None:
         '''
         This function is used to set the upper or lower boundary wall. The wall is depicted
         by the class `WallPoints`.
@@ -61,14 +59,15 @@ class MOC2D():
         if side in UPP:
             self.utyp = typ         # upper boundary type (wall or sym)
             self.upoints = points   # the `WallPoint` class of upper 
-            self.urUp = rUp         # upward radius
             self.uy0  = points[0][1]       
 
         elif side in LOW:
             self.ltyp = typ
-            self.lpoints = points 
-            self.lrUp = rUp  
-            self.ly0  = points[0][1]
+            self.lpoints = points
+            if typ == 'wall':
+                self.ly0  = points[0][1]
+            else:
+                self.ly0 = y0
 
     def _dimen(self, ip: Node, dirc: int) -> Node:
         '''
@@ -94,17 +93,42 @@ class MOC2D():
 
         return newp
 
-    def calc_initial_throat_line(self, n: int, mode: str = 'total', p: float = 0.0, t: float = 0.0, mT: float = 0.0,
-                **para: Dict):
+    def calc_initial_line(self, n: int, mode: str = 'total', 
+                                 p: float = 0.0, t: float = 0.0, mT: float = 0.0,
+                                 urUp: float = 0.0, lrUp: float = 0.0,
+                                 **para: Dict):
         '''
-        This function is used to generate init_line
+        This function is used to generate init_line.
+
+        Initialization is by calculating a c.l. from the first point of each wall boundary. The flow variable on 
+        every points on the initial c.l is decided by the one of following two ways:
+        - `total`   Use NASA's method to calculate the mach number and theta of the points according to the 
+                    distance between the points and the wall, given the total pressure (`p`), temperature (`t`), 
+                    and upstream wall radius (`urUp` and `lrUp`). (see reference) 
+        - `static`  Set the mach number and theta by a given number (`mT`), theta is set to 0
+        - `profile` **TODO**: Set the mach number and theta on the initial line by a profile
+
+        After the mach number and theta being decided, the static pressure and temperature can be calculated by
+        isotropic relations. Then the angle of c.l. from this point can be obtained, and we can step to next point
+        on the initial line.
+
+        If the upper and lower boundary conditions are both `wall`, then two initial line is origined from both sides.
+        After each iteration, whether two lines are intersecting is checked.
 
         ### para:
-        - n (int)   amount of points on the initial line
-        - mode
+        - `n` (int)   amount of points on the initial line
+        - `mode` (str)  way to initialize. 
+        - `p`, `t`      total pressure and temperature
+        - `mT`          mach number
+        - `urUp`, `lrUp`    upstream radius
+        - `LineMaMax`, `LineMaMin`  The maximum and minmum mach number on the initial line. If the mach number calculated
+                                    from the `total` method exceed the range, a sub-iteration is called to change the new 
+                                    point's position to avoid it(by moving the new point's `x`). According to NASA, the max
+                                    mach number is suggested to not exceed 1.5.
+        - `InitPointsDistri`    (= `equal` or `sin`) The distribution of the initial points on the `y` direction.
         
         ### reference:
-        interpreted from CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC programma of NASA
+        interpreted from CalcInitialThroatLine <- MOC_GidCalc_BDE <- the MOC program of NASA
         '''
         
         if 'LineMaMax' in para.keys():
@@ -141,10 +165,17 @@ class MOC2D():
 
             # two Characteristic line origins from both side, and find the intersection point
             if self.utyp in WALLTYP:
-                npoint = calc_throat_point(_yy[ir], nrline, mode, self.urUp, p, t, mT, lmmax, lmmin)
+                npoint = calc_throat_point(_yy[ir], nrline, mode, urUp, p, t, mT, lmmax, lmmin)
+                # npoint is non-dimension, nrline is non-dimensional line used to calculate next 
+                # point, the real point is stored in rline
                 nrline.append(npoint)
                 rline.append(self._dimen(npoint, RIGHTRC))
+                
+                # record initial line
+                if len(rline) > 1:
+                    rline[-1].lastnode(rline[-2], RIGHTRC)
 
+                # determine if left and right initial line intersect
                 if len(lline) >= (n-(ir-1)+1) and (rline[ir-1].x - lline[n-(ir-1)].x) * (rline[ir].x - lline[n-ir].x) <= 0.0:
                     cpoint = calc_interior_point(rline[ir-1], lline[n-ir])
                     lline = lline[:(n-ir)+1] + [cpoint]
@@ -154,12 +185,16 @@ class MOC2D():
                 ir += 1
 
             if self.ltyp in WALLTYP:
-                npoint = calc_throat_point(1.-_yy[il], nlline, mode, self.lrUp, p, t, mT, lmmax, lmmin)
+                npoint = calc_throat_point(1.-_yy[il], nlline, mode, lrUp, p, t, mT, lmmax, lmmin)
                 nlline.append(npoint)
                 lline.append(self._dimen(npoint, LEFTRC))
-
+                
+                # record initial line
+                if len(rline) > 1:
+                    lline[-1].lastnode(lline[-2], LEFTRC)
+                
+                # determine if left and right initial line intersect
                 if len(rline) >= ((il+1)+1) and (rline[il].x - lline[n-il].x) * (rline[il+1].x - lline[n-(il+1)].x) <= 0.0:
-                    # left line intersect into existing left line
                     cpoint = calc_interior_point(rline[il], lline[n-(il+1)])
                     lline = lline[:(n-(il+1))+1] + [cpoint]
                     rline = rline[:il        +1] + [cpoint]
@@ -171,6 +206,20 @@ class MOC2D():
         self.rrcs.append(rline)
 
     def solve(self, max_step: int = 100000):
+        '''
+        Solve the flowfield with MOC
+
+        ## para:
+
+        - `max_step`: maximum steps to calculate
+        
+        '''
+        ## check boundary and initial condition
+        if self.ltyp is None or self.utyp is None:
+            raise RuntimeError("Types for upper or lower boundary conditions are not set\n Use `set_boundary`")
+        if len(self.rrcs) < 1 or len(self.lrcs) < 1:
+            raise RuntimeError("Not initialized\n Use `calc_initial_line`")
+
         t1 = time.time()
         step = 0
 
@@ -186,8 +235,8 @@ class MOC2D():
                     _xw, _yw, _dydxw = next(self.upoints)
                     newrrc = calc_charac_line(_xw, _yw, _dydxw, lastrrc, dirc=RIGHTRC)
                     if self.ltyp in SYMTYP:
-                        newrrc.append(calc_sym_point(newrrc[-1], lastrrc[-1], dirc=RIGHTRC))
-                except EndofwallError:
+                        newrrc.append(calc_boundary_point('free', -RIGHTRC, p2=newrrc[-1], p3=lastrrc[-1])[0])
+                except StopIteration:
                     pass
             # lower wall
             if self.ltyp in WALLTYP:
@@ -197,8 +246,8 @@ class MOC2D():
                     newlrc = calc_charac_line(_xw, _yw, _dydxw, lastlrc, dirc=LEFTRC)
                     if self.utyp in SYMTYP:
                         # print(len(newrrc), len(lastrrc))
-                        newlrc.append(calc_sym_point(newlrc[-1], lastlrc[-1], dirc=LEFTRC))
-                except EndofwallError:
+                        newlrc.append(calc_boundary_point('free', -LEFTRC, p2=newlrc[-1], p3=lastlrc[-1])[0])
+                except StopIteration:
                     pass
             # point on the center line
             if len(newlrc) > 0 and len(newrrc) > 0:
@@ -231,10 +280,13 @@ class MOC2D():
         print('Solve done in %.3f s' % (t2 - t1))
 
     def clear(self):
+        '''
+        clear all the rrcs and lrcs
+        '''
         self.rrcs = []
         self.lrcs = []
 
-    def plot_wall(self, side: str, var: str or List[str] = 'p', wtf: str = None):
+    def plot_wall(self, side: str, var: str or List[str] = 'p', write_to_file: str = None):
         
         flagw = False
         writes = []
@@ -242,8 +294,8 @@ class MOC2D():
         if isinstance(var, str):
             var = [var]
 
-        if wtf is not None:
-            f = open(wtf, 'w')
+        if write_to_file is not None:
+            f = open(write_to_file, 'w')
             flagw = True
 
         if flagw: f.write('#moc\nVARIABLES= X')
@@ -284,22 +336,23 @@ class MOC2D():
                     f.write(' %18.9f' % writes[iv][i])
                 f.write('\n')
 
-    def plot_field(self):
-        return
-        plt.figure(100)
-        #* initline
-        # plt.plot([ip.x for ip in self.rrcs[0]], [ip.y for ip in self.rrcs[0]], '-x', c='b')
-        # plt.plot([ip.x for ip in self.lrcs[0]], [ip.y for ip in self.lrcs[0]], '-x', c='r')
+    def plot_field(self, figure_id=100, write_to_file: str = None, show_figure: bool = False):
+        
+        plt.figure(figure_id)
 
         for line in self.lrcs + self.rrcs:
             for nd in line:
                 if nd.streamnode is not None:
-                    plt.plot([nd.streamnode.x, nd.x], [nd.streamnode.y, nd.y], '-', c='k')
+                    plt.plot([nd.streamnode[0], nd.x], [nd.streamnode[1], nd.y], '-', c='k')
                 if nd.leftnode is not None:
-                    plt.plot([nd.leftnode.x, nd.x], [nd.leftnode.y, nd.y], '-', c='r')
+                    plt.plot([nd.leftnode[0], nd.x], [nd.leftnode[1], nd.y], '-', c='r')
                 if nd.rightnode is not None:
-                    plt.plot([nd.rightnode.x, nd.x], [nd.rightnode.y, nd.y], '-', c='b')
-        # plt.show()
+                    plt.plot([nd.rightnode[0], nd.x], [nd.rightnode[1], nd.y], '-', c='b')
+        if write_to_file is not None:
+            plt.savefig(write_to_file)
+        if show_figure:
+            plt.show()
+        
         return plt
 
 
@@ -365,9 +418,9 @@ class NOZZLE():
             lowerwall.add_section(rlo * np.sin(np.linspace(0., deltaL, narc)), lambda x: -0.5 - rlo + (rlo**2 - x**2)**0.5)
             
             self.kernal.clear()
-            self.kernal.set_boundary('u', typ='wall', y0= 0.5, points=upperwall, rUp=rup)
-            self.kernal.set_boundary('l', typ='wall', y0=-0.5, points=lowerwall, rUp=rlo)
-            self.kernal.calc_initial_throat_line(nthroat, mode='total', p=self.pt, t=self.tt)
+            self.kernal.set_boundary('u', typ='wall', points=upperwall)
+            self.kernal.set_boundary('l', typ='wall', points=lowerwall)
+            self.kernal.calc_initial_line(nthroat, mode='total', p=self.pt, t=self.tt, urUp=rup, lrUp=rlo)
             self.kernal.solve(max_step=1000)
 
             pg = self.kernal.lrcs[-1][-1].p
@@ -405,7 +458,7 @@ class NOZZLE():
             pg = self.kernal.lrcs[-1][-1].p
             ttag = self.kernal.lrcs[-1][-1].tta
             print(pg, self.patm, ttag / DEG)
-            plt00.show()
+            # plt00.show()
             deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
         
             # plt100 = self.kernal.plot_field()

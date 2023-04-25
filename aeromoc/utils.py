@@ -1,6 +1,7 @@
 import math
 from typing import Tuple, List, Dict, Callable
 
+## Constants
 
 GEOM = 0
 GAS_R = 1.4
@@ -17,10 +18,9 @@ DEG = math.pi / 180.
 EPS = 1e-3
 SHOWSTEP = False
 
-class ExtrapolateError(Exception):
-    pass
+## Program define errors
 
-class EndofwallError(Exception):
+class ExtrapolateError(Exception):
     pass
 
 class SubsonicError(Exception):
@@ -33,8 +33,13 @@ class KeySelectError(Exception):
     def __init__(self, key, value) -> None:
         super().__init__('No value: "%s" for key "%s"' % (value, key))
 
+## thermal functions
 
 def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> Tuple[float, float, float]:
+    '''
+    Isentropic relation to obtain pressure, temperature, and density from Ma, total pressure, and total temperature
+    '''
+
     ratio = 1 + (g - 1) / 2. * ma**2
     p = pTotal / ratio**(g / (g - 1))
     t = tTotal / ratio
@@ -42,5 +47,8 @@ def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> T
     return p, t, rho
 
 def P_M(g: float, ma: float) -> float:
+    '''
+    Prandtl-Meyer expansion angle
+    '''
 
     return ((g+1) / (g-1))**0.5 * math.atan(((g-1) / (g+1)*(ma**2 - 1))**0.5) - math.atan(ma**2 - 1)

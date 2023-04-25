@@ -1,16 +1,34 @@
 from .utils import *
 import numpy as np
 import math
-from typing import Tuple, List, Dict, Callable
+from typing import Tuple, List, Dict, Callable,TypeVar
 
 
 class BasicNode():
-    def __init__(self) -> None:
-        self.cors   = np.ones(2) * (-BIG_NUMBER)   # x, y
-        # self.streamnode: BasicNode = None
-        # self.leftnode: BasicNode = None
-        # self.rightnode: BasicNode = None    # the origin of lrc and rrc, for ploting
-        self.showself: bool = False
+    '''
+    This base class is for geometry properties of a node. 
+
+    It only has coordinate (x, y) [**TODO** extend to 3-D].
+
+    ### initilal:
+
+    >>> p1 = BasicNode()         # without assign coordinate
+    >>> p2 = BasicNode(1.0, 2.0) # assign coordinate
+
+    ### properties:
+    `x`, `y`
+    
+    '''
+    def __init__(self, *cor) -> None:
+        if len(cor) == 2:
+            self.cors = np.array(cor)
+        else:
+            self.cors   = np.ones(2) * (-BIG_NUMBER)   # x, y
+        # the origin coordinates of lrc and rrc, for ploting
+        # to avoid slow, only the array is saved, not the point object
+        self.streamnode: np.array = None
+        self.leftnode: np.array = None
+        self.rightnode: np.array = None    
 
     @property
     def x(self) -> float:
@@ -35,31 +53,69 @@ class BasicNode():
         self.cors[1] = value
 
     def lastnode(self, n, dirc: int):
-        # if dirc == LEFTRC:
-        #     self.leftnode = n
-        # elif dirc == RIGHTRC:
-        #     self.rightnode = n
-        # else:
-        #     self.streamnode = n
-        pass
+        '''
+        record last nodes
+
+        ### para:
+        - `n`:  (BasicNode)     the last node
+        - `dirc`:   dirction
+
+        '''
+        if dirc == LEFTRC:
+            self.leftnode = n.cors
+        elif dirc == RIGHTRC:
+            self.rightnode = n.cors
+        else:
+            self.streamnode = n.cors
 
 class Node(BasicNode):
+    '''
+    This base class is for a normal node. 
+    
+    ### initilal:
 
-    def __init__(self, *value) -> None:
-        super().__init__()
+    >>> p1 = BasicNode()         # without assign coordinate
+    >>> p2 = BasicNode(1.0, 2.0) # assign coordinate
+
+    ### properties:
+
+    #### Independent properties (can be set from outside)
+    - coordinate (`x`, `y`)
+    - density (`rho`)
+    - pressure (`p`)
+    - velocity magnitude (`vel`)
+    - velocity direction from x-dirction (`tta`)
+    
+    #### Others
+    - mach angle (`alp`)  = 1 / sin(Ma)
+    - characteristic angle (`lam`)
+        - use indicator `p1.lam(dirc=RIGHTRC)` 
+            - dirc = LEFTRC (+1) for left running
+            - dirc = RIGHTRC (-1) for right runing
+        - use `p1.lam_plus` (left) and `p1.lam_minus` (right)
+    - acoustic speed (`a`)
+    - mach number (`ma`)
+    - temperature (`t`)
+
+    #### Set the properties
+    - directly set the independent properties
+    - `set_by_total`:   set by the total pressure, temperature, mach number and flow angle
+    - `set_by_static`:  set by the static pressure, temperature, mach number and flow angle
+    '''
+
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
         self.vals   = np.array([-1.0, -1.0, -1.0, BIG_NUMBER])  # rho, p, vel, tta
-        
-        if len(value) in [2, 6]:
-            self.cors = np.array(value[:2])
-        if len(value) == 6:
-            self.vals = np.array(value[2:6])
-
         self.g      = 1.4
 
     def __repr__(self) -> str:
         return '(%.2f, %.2f) (%.2f, %.2f %.2f, %.2f)' % tuple(list(self.cors) + list(self.vals))
 
     def set_by_total(self, tta: float, ma: float, pt: float, tt: float) -> None:
+        '''
+        set by the total pressure, temperature, mach number and flow angle
+        '''
         p, t, rho = calc_isentropicPTRHO(g=self.g, ma=ma, pTotal=pt, tTotal=tt)
         self.rho = rho
         self.p   = p
@@ -67,6 +123,9 @@ class Node(BasicNode):
         self.tta = tta
 
     def set_by_static(self, tta: float, ma: float, p: float, t: float) -> None:
+        '''
+        set by the static pressure, temperature, mach number and flow angle
+        '''
         self.rho = p / (GAS_R * t)
         self.p   = p
         self.vel = ma * (self.g * GAS_R * t)**0.5

@@ -7,6 +7,41 @@ import matplotlib.pyplot as plt
 
 class WallPoints():
 
+    '''
+    `WallPoints` is a class for 2-D boundary conditions. Tt describes a line in 2-D plane by discrete 
+    points. These points are saved in `np.array` called `self.xx` and `self.yy`, the steepness (dydx)
+    is also stored.
+
+    The wall is constructed by using `add_section`
+
+    >>>     wall = WallPoints()
+    >>>     xx = np.linspace(0, 5, 9)
+    >>>     wall.add_section(xx, lambda x: -t * x)
+
+    The `WallPoints` class is wrapped as an iterator. The coordinate value can be obtained by index and
+    iteration:
+
+    
+    #### index
+    >>>     x, y, dydx = wall[10]
+
+    #### iteration
+    When used by iteration, an utils.EndofwallError will be raised when reaches the end of wall.
+
+    >>>     try:
+    >>>         x, y, dydx = next(wall)
+    >>>     except StopIteration:
+    >>>         break
+
+    or
+
+    >>>     for x, y, dydx in wall:
+    >>>         pass
+
+
+    
+    '''
+
     def __init__(self) -> None:
         self.xx = None
         self.yy = None
@@ -19,15 +54,32 @@ class WallPoints():
 
     def __next__(self) -> Tuple[float, float, float]:
         if self.step >= len(self.xx):
-            raise EndofwallError()
+            raise StopIteration()
         else:
             self.step += 1
             return self[self.step - 1]
 
-    def last(self) -> Tuple[float, float, float]:
-        return self[self.step - 2]
+    def last(self, idx=-1) -> Tuple[float, float, float]:
+        '''
+        Return the last wall point coordinate.
+        
+        Remark: after using `next()`, the index is one more then current point
+        '''
+        return self[self.step + idx - 1]
 
     def add_section(self, xx: np.array, func: Callable, dfunc: Callable = None, relative_to_last: bool = True) -> None:
+        '''
+        add new section to the wall
+
+        ### para:
+
+        - `xx`:     The x-direction coordinate of new section, the amount of points is decided by length of `xx`
+        - `func`:   A function (`Callable`, either `lambda` or a function) to give y-dirction coordinate for each point in `xx`
+        - `dfunc`:  A function to give gradient `dydx` for each point in `xx`
+            - if the `dfunc` is None, then `dfunc` is obtained by finite difference (finite length is decided by `utils.EPS`)
+        - `relative_to_last`:   (bool) whether the newly added points is relative to the last existing point.
+        
+        '''
         
         _yy = np.array([func(xi) for xi in xx])
         
@@ -38,7 +90,7 @@ class WallPoints():
             _xx = xx
         
         if dfunc is None:
-            # use centriod differencial to get dydx
+            # use centriod difference to get dydx
             _dydx = np.array([(func(xi + EPS) - func(xi - EPS)) / (2.0 * EPS) for xi in xx])
         else:
             _dydx = np.array([dfunc(xi) for xi in xx])
@@ -51,14 +103,22 @@ class WallPoints():
             self.xx   = np.concatenate((self.xx,     _xx[min(1, len(xx)-1):]), axis=0)
             self.yy   = np.concatenate((self.yy,     _yy[min(1, len(xx)-1):]), axis=0)
             self.dydx = np.concatenate((self.dydx, _dydx[min(1, len(xx)-1):]), axis=0)
+        
+        self.dydx = np.arctan(self.dydx)
     
     def del_section(self, n: int) -> None:
+        '''
+        delete n existing points of the wall
+
+        ### para:
+        - `n`:     number of deleting points
+        '''
+
         self.step = min(self.step, len(self.xx) - n)
         self.xx = self.xx[:-n]
         self.yy = self.yy[:-n]
         self.dydx = self.dydx[:-n]
         
-
     def plot(self):
 
         plt.figure(0)
