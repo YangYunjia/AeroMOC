@@ -338,7 +338,9 @@ class MOC2D():
 
     def plot_field(self, figure_id=100, write_to_file: str = None, show_figure: bool = False):
         
-        plt.figure(figure_id)
+        plt.figure(figure_id, figsize=(10,4))
+        plt.xlim(0, 30)
+        plt.ylim(0, 4.5)
 
         for line in self.lrcs + self.rrcs:
             for nd in line:
@@ -348,6 +350,9 @@ class MOC2D():
                     plt.plot([nd.leftnode[0], nd.x], [nd.leftnode[1], nd.y], '-', c='r')
                 if nd.rightnode is not None:
                     plt.plot([nd.rightnode[0], nd.x], [nd.rightnode[1], nd.y], '-', c='b')
+        
+        self.upoints.plot()
+        
         if write_to_file is not None:
             plt.savefig(write_to_file)
         if show_figure:

@@ -16,7 +16,7 @@ RIGHTRC = -1
 PI = math.pi
 DEG = math.pi / 180.
 EPS = 1e-3
-SHOWSTEP = False
+SHOWSTEP = True
 
 ## Program define errors
 

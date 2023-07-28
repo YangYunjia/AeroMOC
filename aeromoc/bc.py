@@ -121,6 +121,6 @@ class WallPoints():
         
     def plot(self):
 
-        plt.figure(0)
-        plt.plot(self.xx, self.yy, '-o', 'k')
-        plt.show()
+        # plt.figure(0)
+        plt.plot(self.xx, self.yy, '-', c='k')
+        # plt.show()

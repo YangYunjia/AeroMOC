@@ -3,6 +3,7 @@ verify/
 *.dat
 *.zip
 .DS_Store
+*figure*
 
 
 # Byte-compiled / optimized / DLL files
