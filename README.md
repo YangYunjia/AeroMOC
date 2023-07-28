@@ -17,4 +17,6 @@ The program is based on references below:
 
 The program is initially developed by Yunjia Yang (yyj980401@126.com). It is also a option of the assignment of Prof. Yufei Zhang's (zhangyufei@tsinghua.edu.cn) curriculum "Advanced Aerodynamics".
 
+- (Spring, 2023) Ziheng Xuzhong (许钟子珩), xzzh22@mails.tsinghua.edu.cn, Add boundary layer correction
+
 The program is open to further development. Please follow the instruction to fork and raise pull request.

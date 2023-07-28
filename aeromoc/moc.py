@@ -19,7 +19,7 @@ from typing import Tuple, List, Dict, Callable
 
 from .utils import *
 from .node import Node, ShockNode
-from .bc import WallPoints
+from .bc import WallPoints, blc_edenfield, blc_linear_estimate
 from .basic import calc_interior_point, calc_charac_line, calc_boundary_point, calc_shock_wall_point, calcback_charac_line, calc_throat_point
 
 
@@ -40,6 +40,10 @@ class MOC2D():
         self.ly0 = 0.0
         self.upoints: WallPoints = None
         self.lpoints: WallPoints = None
+        self.upoints_blc: WallPoints = None
+        self.lpoints_blc: WallPoints = None
+        self.udata: np.ndarray = None
+        self.ldata: np.ndarray = None
 
         self.rrcs: List[List[Node]] = []
         self.lrcs: List[List[Node]] = []
@@ -293,9 +297,8 @@ class MOC2D():
 
         points = WallPoints()
         points.add_section(xx=np.array(_x), yy=np.array(_y), dydx=np.array(_dydx))
-        print(points.xx)
-        if dirc == RIGHTRC: self.upoints = points
-        if dirc == LEFTRC:  self.lpoints = points
+        if dirc == RIGHTRC: self.upoints = points; self.utyp = 'wall'
+        if dirc == LEFTRC:  self.lpoints = points; self.ltyp = 'wall'
                 
     def clear(self):
         '''
@@ -304,6 +307,22 @@ class MOC2D():
         self.rrcs = []
         self.lrcs = []
 
+    def get_boundary_variables(self):
+        '''
+        variables: x, y, rho, p, vel, theta, ma, t
+                   0, 1,   2, 3,   4,     5,  6, 7 
+        '''
+
+        for idx, rcs in enumerate([self.rrcs, self.lrcs]):
+            data = []
+            for cl in rcs:  
+                if len(cl) > 0:
+                    data.append([cl[0].x, cl[0].y, cl[0].rho, cl[0].p, cl[0].vel, cl[0].tta, cl[0].ma, cl[0].p / (cl[0].rho * GAS_R)])
+            if idx == 0:
+                self.udata = np.array(data).transpose()
+            else:
+                self.ldata = np.array(data).transpose()
+        
     def plot_wall(self, side: str, var: str or List[str] = 'p', write_to_file: str = None):
         
         flagw = False
@@ -316,7 +335,7 @@ class MOC2D():
             f = open(write_to_file, 'w')
             flagw = True
 
-        if flagw: f.write('#moc\nVARIABLES= X')
+        if flagw: f.write('# moc\nVARIABLES= X')
         
         for v in var:
             if v not in dir(self.rrcs[0][0]):
@@ -357,8 +376,8 @@ class MOC2D():
     def plot_field(self, figure_id=100, write_to_file: str = None, show_figure: bool = False):
         
         plt.figure(figure_id, figsize=(10,4))
-        plt.xlim(0, 30)
-        plt.ylim(0, 4.5)
+        # plt.xlim(0, 30)
+        # plt.ylim(0, 4.5)
 
         for line in self.lrcs + self.rrcs:
             for nd in line:
@@ -378,6 +397,36 @@ class MOC2D():
         
         return plt
 
+    def boundary_layer_correction(self, x0, method='edenfield', mode='design', **kwargs):
+
+        self.get_boundary_variables()
+        for idx, data in enumerate([self.udata, self.ldata]):
+
+            if len(data) == 0: continue
+
+            if method == 'edenfield':
+                dys = blc_edenfield(xx=data[0], x0=x0, pp=data[3], ma=data[6], tt=data[7], t0=kwargs['t0'], tw=kwargs['tw'])
+            elif method == 'linear':
+                dys = blc_linear_estimate(xx=data[0], x0=x0, Me=data[6][-1])
+
+            dys = np.maximum(0.0, dys)
+
+            if mode == 'design':
+
+                if idx == 0 and self.utyp in WALLTYP:
+                    self.upoints_blc = WallPoints()
+                    self.upoints_blc.add_section(data[0] - dys * np.sin(data[5]), data[1] + dys * np.cos(data[5]))
+                if idx == 1 and self.ltyp in WALLTYP:
+                    self.lpoints_blc = WallPoints()
+                    self.lpoints_blc.add_section(data[0] - dys * np.sin(data[5]), data[1] - dys * np.cos(data[5]))
+
+            elif mode == 'simulation':
+                self.upoints_blc = copy.deepcopy(self.upoints)
+                xx_blc = data[0] + dys * np.sin(data[5])
+                yy_blc = data[1] - dys * np.cos(data[5])
+                self.upoints = WallPoints()
+                self.upoints.add_section(xx_blc, yy_blc)            
+
 
     def calc_shock_line(self, _lines: List[List[Node]], _xw: float, _yw: float, _dydxw1: float, _dydxw2: float) -> List[ShockNode]:
 
@@ -396,7 +445,7 @@ class NOZZLE():
 
     def __init__(self, method: str, pt: float, tt: float, patm: float, asym: float, rup: float, rlow: float) -> None:
         self.convergence = MOC2D()
-        self.kernal = MOC2D()
+        self.kernel = MOC2D()
         self.expansion = MOC2D()
 
         self.method = method
@@ -408,13 +457,18 @@ class NOZZLE():
         self.r = (rup, rlow)
         self.delta = [0.0, 0.0]
 
-        self.g = 1.4
+        self.g = GAS_GAMMA
 
     @property
     def npr(self) -> float:
         return self.pt / self.patm
 
     def solve(self):
+
+        if self.method in ['idealAsym']:
+            self.solve_idealAsym()
+
+    def solve_idealAsym(self):
         
         nthroat = 21
         narc = 15
@@ -441,23 +495,23 @@ class NOZZLE():
             lowerwall = WallPoints()
             lowerwall.add_section(xx=rlo * np.sin(np.linspace(0., deltaL, narc)), func=lambda x: -0.5 - rlo + (rlo**2 - x**2)**0.5)
             
-            self.kernal.clear()
-            self.kernal.set_boundary('u', typ='wall', points=upperwall)
-            self.kernal.set_boundary('l', typ='wall', points=lowerwall)
-            self.kernal.calc_initial_line(nthroat, mode='total', p=self.pt, t=self.tt, urUp=rup, lrUp=rlo)
-            self.kernal.solve(max_step=1000)
+            self.kernel.clear()
+            self.kernel.set_boundary('u', typ='wall', points=upperwall)
+            self.kernel.set_boundary('l', typ='wall', points=lowerwall)
+            self.kernel.calc_initial_line(nthroat, mode='total', p=self.pt, t=self.tt, urUp=rup, lrUp=rlo)
+            self.kernel.solve(max_step=1000)
 
-            pg = self.kernal.lrcs[-1][-1].p
-            ttag = self.kernal.lrcs[-1][-1].tta
+            pg = self.kernel.lrcs[-1][-1].p
+            ttag = self.kernel.lrcs[-1][-1].tta
             print(pg, ttag / DEG)
 
             # solve LRCs of C-E to make thetaG = 0.
             dx = rlo * math.sin(deltaL) / 5.
-            while abs(self.kernal.lrcs[-1][-1].tta) > EPS: 
+            while abs(self.kernel.lrcs[-1][-1].tta) > EPS: 
                 
                 lowerwall.add_section(xx=np.array([dx]), func=lambda x: -math.tan(deltaL) * x)
                 _xw, _yw, _dydxw = next(lowerwall)
-                newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
+                newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernel.lrcs[-1], dirc=LEFTRC)
 
                 while newlrc[-1].tta < 0.:
 
@@ -466,21 +520,21 @@ class NOZZLE():
                     lowerwall.add_section(xx=np.array([dx]), func=lambda x: -math.tan(deltaL) * x)
                     _xw, _yw, _dydxw = next(lowerwall)
                     # lowerwall.plot()
-                    newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
+                    newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernel.lrcs[-1], dirc=LEFTRC)
                     # print(lowerwall.xx[-1], dx, newlrc[-1].tta)
                     if SHOWSTEP:
-                        plt00 = self.kernal.plot_field()
+                        plt00 = self.kernel.plot_field()
                         plt00.savefig('%.3f.png'% time.time())
                 
-                self.kernal.lrcs.append(newlrc)
-                self.kernal.rrcs[-1].append(newlrc[-1])
+                self.kernel.lrcs.append(newlrc)
+                self.kernel.rrcs[-1].append(newlrc[-1])
 
                 if SHOWSTEP:
-                    plt00 = self.kernal.plot_field()
+                    plt00 = self.kernel.plot_field()
                     plt00.savefig('%.3f.png'% time.time())
             
-            pg = self.kernal.lrcs[-1][-1].p
-            ttag = self.kernal.lrcs[-1][-1].tta
+            pg = self.kernel.lrcs[-1][-1].p
+            ttag = self.kernel.lrcs[-1][-1].tta
             print(pg, self.patm, ttag / DEG)
             # plt00.show()
             deltaU +=  0.2 * (pg / self.patm - 1) * deltaU
@@ -489,8 +543,8 @@ class NOZZLE():
             # plt100.show()
 
         #* solve wall contour
-        expansion_dx = self.kernal.lrcs[-1][-1].x - self.kernal.lrcs[-1][-2].x
-        old_ll = self.kernal.rrcs[-1]
+        expansion_dx = self.kernel.lrcs[-1][-1].x - self.kernel.lrcs[-1][-2].x
+        old_ll = self.kernel.rrcs[-1]
         self.expansion.rrcs.append(old_ll)  # for plot
         # print(self.kernal.lrcs[-1][-1].lam_plus, self.kernal.lrcs[-1][-2].lam_plus, self.kernal.lrcs[-1][-3].lam_plus)
 
@@ -503,22 +557,24 @@ class NOZZLE():
 
             if SHOWSTEP:
                 self.expansion.reconstruct_wall(dirc=RIGHTRC)
-                plt00 = self.kernal.plot_field()
+                plt00 = self.kernel.plot_field()
                 plt00 = self.expansion.plot_field()
                 plt00.savefig('%.3f.png'% time.time())
 
         self.expansion.reconstruct_wall(dirc=RIGHTRC)
-        plt100 = self.kernal.plot_field()
+        plt100 = self.kernel.plot_field()
         plt100 = self.expansion.plot_field().show()
 
     def cal_conv_section(self, L: float, yt: float, yi: float, nn: float = 50, method: str = 'Witoszynski'):
         '''
-        %使用Witoszynski方法计算喷管收缩段形线
+        calculate nozzle contour of the convergence section
         - `L`   (float)     length of the convergence section
         - `yt`  (float)     radius at the throat
         - `yi`  (float)     radius at the inlet
+        - `nn`  (int)       number of the points
+        - `method` (str)    method to calculate the contour, default is the Witoszynski method(1)
         
-        Ref. Witoszynski C. Ueber strahlerweiterung und strahlablablenkung. Vortr ge aus dem gebiete der hydro-und aerodynamik, 1922.
+        (1) Ref. Witoszynski C. Ueber strahlerweiterung und strahlablablenkung. Vortr ge aus dem gebiete der hydro-und aerodynamik, 1922.
         '''
         x = np.linspace(0., 1., num=nn)
 
@@ -528,18 +584,48 @@ class NOZZLE():
 
         self.convergence.upoints = WallPoints()
         self.convergence.upoints.add_section(xx=x_dim, yy=y)
+
+        if self.method in ['idealAsym']:
+            self.convergence.lpoints = WallPoints()
+            self.convergence.lpoints.add_section(xx=x_dim, yy=-y)            
         
     def plot_contour(self, write_to_file: str = None):
         
         for name, color, zone in zip(
             ['Convergence', 'Kernel', 'Expansion'],
             ['r', 'b', 'k'],
-            [self.convergence, self.kernal, self.expansion]):
+            [self.convergence, self.kernel, self.expansion]):
 
-            if zone.upoints is not None:
-                plt.plot(zone.upoints.xx, zone.upoints.yy, c=color, label=name)
+            plt.plot(zone.upoints.xx, zone.upoints.yy, c=color, label=name)
+            if zone.upoints_blc is not None:
+                plt.plot(zone.upoints_blc.xx, zone.upoints_blc.yy, '--', c=color, label=name)
+            
+        if self.method in ['idealAsym']:
+            for color, zone in zip(
+                                ['r', 'b'],
+                                [self.convergence, self.kernel]):
+                plt.plot(zone.lpoints.xx, zone.lpoints.yy, c=color)
+                if zone.lpoints_blc is not None:
+                    plt.plot(zone.lpoints_blc.xx, zone.lpoints_blc.yy, '--', c=color)
 
         plt.show()
 
+    def apply_blc(self):
 
+        # decide the starting point of the boundary layer
+        xi = self.kernel.upoints.xx[-1]
+        yi = self.kernel.upoints.yy[-1]
+        dydxi = self.kernel.upoints.dydx[-1]
+        x0 = xi - yi / dydxi
 
+        # calculate the boundary layer correction with the edenfield method
+        for zone in [self.kernel, self.expansion]:
+            zone.boundary_layer_correction(x0, 'edenfield', 'design', t0=self.tt, tw=None)
+        
+        # shift the convergence section
+        self.convergence.upoints_blc = WallPoints()
+        self.convergence.lpoints_blc = WallPoints()
+        xx_bls = self.convergence.upoints.xx
+        yy_bls = self.convergence.upoints.yy + (self.kernel.upoints_blc.yy[0] - self.convergence.upoints.yy[-1]) * (xx_bls - xx_bls[0]) / (xx_bls[-1] - xx_bls[0])
+        self.convergence.upoints_blc.add_section(xx=xx_bls, yy=yy_bls)
+        self.convergence.lpoints_blc.add_section(xx=xx_bls, yy=-yy_bls)

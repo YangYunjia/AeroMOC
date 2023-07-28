@@ -4,6 +4,13 @@ import math
 from typing import Tuple, List, Dict, Callable
 import matplotlib.pyplot as plt
 
+def finite_diff(_xx: np.ndarray, _yy: np.ndarray):
+    _dydx = np.zeros_like(_xx)
+    _dydx[1:-1] = (_yy[2:] - _yy[:-2]) / (_xx[2:] - _xx[:-2])
+    _dydx[0]    = (_yy[1] - _yy[0])    / (_xx[1] - _xx[0])
+    _dydx[-1]   = (_yy[-1] - _yy[-2])  / (_xx[-1] - _xx[-2])
+    
+    return _dydx
 
 class WallPoints():
 
@@ -104,8 +111,7 @@ class WallPoints():
             if func is not None:
                 _dydx = np.array([(func(xi + EPS) - func(xi - EPS)) / (2.0 * EPS) for xi in xx])
             else:
-                _dydx = np.zeros_like(_xx)
-                _dydx[1:-1] = (_yy[2:] - _yy[:-2]) / (_xx[2:] - _xx[:-2])
+                _dydx = finite_diff(_xx, _yy)
         
         if self.xx is None:
             self.xx = _xx
@@ -136,3 +142,74 @@ class WallPoints():
         # plt.figure(0)
         plt.plot(self.xx, self.yy, '-', c='k')
         # plt.show()
+
+'''
+Boundary-layer correction (BLC)
+'''
+
+'''
+class BLC():
+
+    def __init__(self, method) -> None:
+        self.method = method
+
+def blc(xx: np.array, x0: float, method: str, **kwargs):
+
+    if method == 'linear':
+        return blc_linear_estimate(xx, x0, **kwargs)
+    elif method == 'edenfield':
+        return blc_edenfield(xx, x0, **kwargs)
+'''
+
+def blc_linear_estimate(xx: np.array, x0: float, Me: float):
+    
+    '''
+    Use linear relation to estimate thickness
+    xx:     x-coordinates
+    x0:     the origin of the boundary layer
+    Me:     Mach number at the exit of the nozzle
+    Ref:    刘政崇. 高低速风洞气动与结构设计[M]. 国防工业出版社, 2003
+    '''
+
+    a0 = -7.166650
+    a1 = 6.694431
+    a2 = -2.209718
+    a3 = 0.3385411
+    a4 = -2.3611065e-2
+    a5 = 6.0763751e-4
+
+    beta = (a0 + a1 * Me + a2 * Me**2 + a3 * Me**3 + a4 * Me**4 + a5 * Me**5)
+
+    return (xx - x0) * np.tan(beta / 180 * np.pi)
+
+def blc_edenfield(xx: np.array, x0: float, pp: np.array, ma: np.array, tt: np.array, t0: float, tw: float = None):
+    '''
+    Apply the boundary layer correction with Edenfield's method
+    xx, pp, ma, tt:     the x-coordinate, pressure, mach number, and temperature obtained with MOC, 
+                        will be seen as the margin value of the boundary layer
+    x0:     the origin of the boundary layer
+    t0:     inlet total temperature
+    tw:     the wall temperature, `None` for adiabatic wall
+    
+    Ref: Edenfield E E. Contoured nozzle design and evaluation for hotshot wind tunnels. AIAA68-0369, 1968.04.
+    
+    Remark: Due to the low temperature of the wind tunnel, Saterland's formula is not fully applicable, so the 
+            formula given by Brebach Todos can be considered for calculation.
+            Ref. Brebach W J, Thodos G. Viscosity-reduced state correlation for diatomic gases. Ind. Eng. Chem, Vol.50, NO.7, 1958.07.
+    '''
+
+    r = GAS_PR**(1./3.)           # recover coefficents
+
+    t_ad = tt + r * (t0 - tt) # adiatic recover temperature
+
+    if tw is None:  # adiatic wall
+        tw = t_ad
+    
+    t_ref   = 0.5 * (tw + tt) + 0.22 * (t_ad - tt)   # reference temerature
+    mu_ref  = sutherland(t_ref);    # viscosity
+    rho_ref = pp / (t_ref * GAS_R);   # density corresponding to the t_ref
+    Ue      = ma * (GAS_GAMMA * GAS_R * tt)**0.5  # velocity at the margin of the boundary layer
+    Re_ref  = rho_ref * Ue * (xx - x0) / mu_ref # reference Reynold number
+
+    return 0.42 * (xx - x0) * Re_ref**-0.2775
+
