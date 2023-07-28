@@ -279,6 +279,24 @@ class MOC2D():
         t2 = time.time()
         print('Solve done in %.3f s' % (t2 - t1))
 
+    def reconstruct_wall(self, dirc):
+        _x = []
+        _y = []
+        _dydx = []
+
+        for cl in (self.lrcs, self.rrcs)[dirc == RIGHTRC]:
+            _x.append(cl[0].x)
+            _y.append(cl[0].y)
+            _dydx.append(cl[0].tta)
+            if _dydx[-1] >= BIG_NUMBER:
+                print(_x[-1], _y[-1])
+
+        points = WallPoints()
+        points.add_section(xx=np.array(_x), yy=np.array(_y), dydx=np.array(_dydx))
+        print(points.xx)
+        if dirc == RIGHTRC: self.upoints = points
+        if dirc == LEFTRC:  self.lpoints = points
+                
     def clear(self):
         '''
         clear all the rrcs and lrcs
@@ -377,6 +395,7 @@ class NOZZLE():
     '''
 
     def __init__(self, method: str, pt: float, tt: float, patm: float, asym: float, rup: float, rlow: float) -> None:
+        self.convergence = MOC2D()
         self.kernal = MOC2D()
         self.expansion = MOC2D()
 
@@ -417,10 +436,10 @@ class NOZZLE():
             # print(self.delta)
             
             upperwall = WallPoints()
-            upperwall.add_section(rup * np.sin(np.linspace(0., deltaU, narc)), lambda x:  0.5 + rup - (rup**2 - x**2)**0.5)
+            upperwall.add_section(xx=rup * np.sin(np.linspace(0., deltaU, narc)), func=lambda x:  0.5 + rup - (rup**2 - x**2)**0.5)
 
             lowerwall = WallPoints()
-            lowerwall.add_section(rlo * np.sin(np.linspace(0., deltaL, narc)), lambda x: -0.5 - rlo + (rlo**2 - x**2)**0.5)
+            lowerwall.add_section(xx=rlo * np.sin(np.linspace(0., deltaL, narc)), func=lambda x: -0.5 - rlo + (rlo**2 - x**2)**0.5)
             
             self.kernal.clear()
             self.kernal.set_boundary('u', typ='wall', points=upperwall)
@@ -436,7 +455,7 @@ class NOZZLE():
             dx = rlo * math.sin(deltaL) / 5.
             while abs(self.kernal.lrcs[-1][-1].tta) > EPS: 
                 
-                lowerwall.add_section(np.array([dx]), lambda x: -math.tan(deltaL) * x)
+                lowerwall.add_section(xx=np.array([dx]), func=lambda x: -math.tan(deltaL) * x)
                 _xw, _yw, _dydxw = next(lowerwall)
                 newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
 
@@ -444,7 +463,7 @@ class NOZZLE():
 
                     lowerwall.del_section(n=1)
                     dx /= 2.
-                    lowerwall.add_section(np.array([dx]), lambda x: -math.tan(deltaL) * x)
+                    lowerwall.add_section(xx=np.array([dx]), func=lambda x: -math.tan(deltaL) * x)
                     _xw, _yw, _dydxw = next(lowerwall)
                     # lowerwall.plot()
                     newlrc = calc_charac_line(_xw, _yw, _dydxw, self.kernal.lrcs[-1], dirc=LEFTRC)
@@ -472,7 +491,7 @@ class NOZZLE():
         #* solve wall contour
         expansion_dx = self.kernal.lrcs[-1][-1].x - self.kernal.lrcs[-1][-2].x
         old_ll = self.kernal.rrcs[-1]
-
+        self.expansion.rrcs.append(old_ll)  # for plot
         # print(self.kernal.lrcs[-1][-1].lam_plus, self.kernal.lrcs[-1][-2].lam_plus, self.kernal.lrcs[-1][-3].lam_plus)
 
         while len(old_ll) > 1:
@@ -483,16 +502,44 @@ class NOZZLE():
             old_ll = newl
 
             if SHOWSTEP:
+                self.expansion.reconstruct_wall(dirc=RIGHTRC)
                 plt00 = self.kernal.plot_field()
                 plt00 = self.expansion.plot_field()
                 plt00.savefig('%.3f.png'% time.time())
 
-
+        self.expansion.reconstruct_wall(dirc=RIGHTRC)
         plt100 = self.kernal.plot_field()
         plt100 = self.expansion.plot_field().show()
 
-            
+    def cal_conv_section(self, L: float, yt: float, yi: float, nn: float = 50, method: str = 'Witoszynski'):
+        '''
+        %使用Witoszynski方法计算喷管收缩段形线
+        - `L`   (float)     length of the convergence section
+        - `yt`  (float)     radius at the throat
+        - `yi`  (float)     radius at the inlet
+        
+        Ref. Witoszynski C. Ueber strahlerweiterung und strahlablablenkung. Vortr ge aus dem gebiete der hydro-und aerodynamik, 1922.
+        '''
+        x = np.linspace(0., 1., num=nn)
 
+        if method in ['Witoszynski']:
+            y = yt * (1. - (1. - (yt / yi)**2) * (((1 - x**2)**2) / ((1 + 1./3. * x**2)**3)))**-0.5
+            x_dim = (x - 1.) * L
+
+        self.convergence.upoints = WallPoints()
+        self.convergence.upoints.add_section(xx=x_dim, yy=y)
+        
+    def plot_contour(self, write_to_file: str = None):
+        
+        for name, color, zone in zip(
+            ['Convergence', 'Kernel', 'Expansion'],
+            ['r', 'b', 'k'],
+            [self.convergence, self.kernal, self.expansion]):
+
+            if zone.upoints is not None:
+                plt.plot(zone.upoints.xx, zone.upoints.yy, c=color, label=name)
+
+        plt.show()
 
 
 

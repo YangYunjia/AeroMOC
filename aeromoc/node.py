@@ -119,16 +119,16 @@ class Node(BasicNode):
         p, t, rho = calc_isentropicPTRHO(g=self.g, ma=ma, pTotal=pt, tTotal=tt)
         self.rho = rho
         self.p   = p
-        self.vel = ma * (self.g * GAS_R * t)**0.5
+        self.vel = ma * (self.g * GAS_GAMMA * t)**0.5
         self.tta = tta
 
     def set_by_static(self, tta: float, ma: float, p: float, t: float) -> None:
         '''
         set by the static pressure, temperature, mach number and flow angle
         '''
-        self.rho = p / (GAS_R * t)
+        self.rho = p / (GAS_GAMMA * t)
         self.p   = p
-        self.vel = ma * (self.g * GAS_R * t)**0.5
+        self.vel = ma * (self.g * GAS_GAMMA * t)**0.5
         self.tta = tta
 
     @property
@@ -246,7 +246,7 @@ class Node(BasicNode):
 
     @property
     def t(self) -> float:
-        return self.a**2 / self.g / GAS_R
+        return self.a**2 / self.g / GAS_GAMMA
 
 class ShockNode(BasicNode):
     

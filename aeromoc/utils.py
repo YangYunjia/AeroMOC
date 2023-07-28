@@ -4,7 +4,10 @@ from typing import Tuple, List, Dict, Callable
 ## Constants
 
 GEOM = 0
-GAS_R = 1.4
+GAS_GAMMA = 1.4
+GAS_R = 287
+GAS_PR = 0.9    # turbulant pranlt number
+
 BIG_NUMBER = 100000.
 
 WALLTYP = ['wall']
@@ -16,7 +19,7 @@ RIGHTRC = -1
 PI = math.pi
 DEG = math.pi / 180.
 EPS = 1e-3
-SHOWSTEP = True
+SHOWSTEP = False
 
 ## Program define errors
 
@@ -43,8 +46,11 @@ def calc_isentropicPTRHO(g: float, ma: float, pTotal: float, tTotal: float) -> T
     ratio = 1 + (g - 1) / 2. * ma**2
     p = pTotal / ratio**(g / (g - 1))
     t = tTotal / ratio
-    rho = p / (GAS_R * t)
+    rho = p / (GAS_GAMMA * t)
     return p, t, rho
+
+def isentropic_T(g: float, ma: float):
+    return 1 + 0.5 * (g-1) * ma**2
 
 def P_M(g: float, ma: float) -> float:
     '''
@@ -52,3 +58,11 @@ def P_M(g: float, ma: float) -> float:
     '''
 
     return ((g+1) / (g-1))**0.5 * math.atan(((g-1) / (g+1)*(ma**2 - 1))**0.5) - math.atan(ma**2 - 1)
+
+def sutherland(t):
+
+    _mu0 = 1.716e-5
+    _T0 = 273.11
+    _S0 = 110.56
+
+    return _mu0 * (t/_T0)**1.5 * (_T0 + _S0) / (t + _S0)

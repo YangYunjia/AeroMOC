@@ -26,7 +26,7 @@ if __name__ == '__main__':
     
     moc = MOC2D()
     moc.set_boundary('u', typ='wall', points=upperwall)
-    moc.set_boundary('l', typ='sym',  y0=-2.0)
+    moc.set_boundary('l', typ='sym',  y0=0.0)
     # moc.set_boundary('l', typ='wall', points=lowerwall)
     # moc.set_boundary('u', typ='sym',  y0=0.0)
 

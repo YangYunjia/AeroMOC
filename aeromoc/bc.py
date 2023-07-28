@@ -44,7 +44,7 @@ class WallPoints():
 
     def __init__(self) -> None:
         self.xx = None
-        self.yy = None
+       
         self.dydx = None
         self.step = 1
         self.eps = 1e-2
@@ -67,7 +67,10 @@ class WallPoints():
         '''
         return self[self.step + idx - 1]
 
-    def add_section(self, xx: np.array, func: Callable, dfunc: Callable = None, relative_to_last: bool = True) -> None:
+    def add_section(self, xx: np.array, yy: np.array = None, dydx: np.array = None,
+                    func: Callable = None, 
+                    dfunc: Callable = None, 
+                    relative_to_last: bool = True) -> None:
         '''
         add new section to the wall
 
@@ -81,7 +84,10 @@ class WallPoints():
         
         '''
         
-        _yy = np.array([func(xi) for xi in xx])
+        if yy is not None:
+            _yy = yy
+        else:
+            _yy = np.array([func(xi) for xi in xx])
         
         if self.xx is not None and relative_to_last:
             _xx =  xx + self.xx[-1]
@@ -89,11 +95,17 @@ class WallPoints():
         else:
             _xx = xx
         
-        if dfunc is None:
-            # use centriod difference to get dydx
-            _dydx = np.array([(func(xi + EPS) - func(xi - EPS)) / (2.0 * EPS) for xi in xx])
-        else:
+        if dfunc is not None:
             _dydx = np.array([dfunc(xi) for xi in xx])
+        elif dydx is not None:
+            _dydx = dydx
+        else:
+            # use centriod difference to get dydx
+            if func is not None:
+                _dydx = np.array([(func(xi + EPS) - func(xi - EPS)) / (2.0 * EPS) for xi in xx])
+            else:
+                _dydx = np.zeros_like(_xx)
+                _dydx[1:-1] = (_yy[2:] - _yy[:-2]) / (_xx[2:] - _xx[:-2])
         
         if self.xx is None:
             self.xx = _xx
