@@ -13,7 +13,7 @@ setup(name=__name__,
       author='Aerolab',
       author_email='yyj980401@126.com',
       packages=find_packages(),
-      install_requires=['numpy'],
+      install_requires=['numpy', 'matplotlib'],
       classifiers=[
             'Programming Language :: Python :: 3'
       ]
