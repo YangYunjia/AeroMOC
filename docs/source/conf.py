@@ -54,16 +54,16 @@ html_theme = 'alabaster'
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
-import recommonmark
-from recommonmark.parser import CommonMarkParser
-from recommonmark.transform import AutoStructify
-source_parsers = {
-    '.md': CommonMarkParser,
-   }
-source_suffix = ['.rst', '.md']
+# import recommonmark
+# from recommonmark.parser import CommonMarkParser
+# from recommonmark.transform import AutoStructify
+# source_parsers = {
+#     '.md': CommonMarkParser,
+#    }
+# source_suffix = ['.rst', '.md']
 
 # html_theme = "sphinx_rtd_theme"
-extensions = ['recommonmark']
+extensions = ['myst_parser']
 
 # def setup(app):
 #     app.add_config_value('recommonmark_config', {
