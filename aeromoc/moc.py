@@ -19,7 +19,7 @@ from typing import Tuple, List, Dict, Callable
 
 from .utils import *
 from .node import Node, ShockNode
-from .bc import WallPoints, blc_edenfield, blc_linear_estimate
+from .bc import BoundPoints, blc_edenfield, blc_linear_estimate
 from .basic import calc_interior_point, calc_charac_line, calc_boundary_point, calc_shock_wall_point, calcback_charac_line, calc_throat_point
 
 
@@ -38,17 +38,17 @@ class MOC2D():
         self.ltyp: str = None
         self.uy0 = 1.0
         self.ly0 = 0.0
-        self.upoints: WallPoints = None
-        self.lpoints: WallPoints = None
-        self.upoints_blc: WallPoints = None
-        self.lpoints_blc: WallPoints = None
+        self.upoints: BoundPoints = None
+        self.lpoints: BoundPoints = None
+        self.upoints_blc: BoundPoints = None
+        self.lpoints_blc: BoundPoints = None
         self.udata: np.ndarray = None
         self.ldata: np.ndarray = None
 
         self.rrcs: List[List[Node]] = []
         self.lrcs: List[List[Node]] = []
 
-    def set_boundary(self, side: str, typ: str, points: WallPoints = None, y0: int = None) -> None:
+    def set_boundary(self, side: str, typ: str, points: BoundPoints = None, y0: int = None) -> None:
         '''
         This function is used to set the upper or lower boundary wall. The wall is depicted
         by the class `WallPoints`.
@@ -295,7 +295,7 @@ class MOC2D():
             if _dydx[-1] >= BIG_NUMBER:
                 print(_x[-1], _y[-1])
 
-        points = WallPoints()
+        points = BoundPoints()
         points.add_section(xx=np.array(_x), yy=np.array(_y), dydx=np.array(_dydx))
         if dirc == RIGHTRC: self.upoints = points; self.utyp = 'wall'
         if dirc == LEFTRC:  self.lpoints = points; self.ltyp = 'wall'
@@ -414,17 +414,17 @@ class MOC2D():
             if mode == 'design':
 
                 if idx == 0 and self.utyp in WALLTYP:
-                    self.upoints_blc = WallPoints()
+                    self.upoints_blc = BoundPoints()
                     self.upoints_blc.add_section(data[0] - dys * np.sin(data[5]), data[1] + dys * np.cos(data[5]))
                 if idx == 1 and self.ltyp in WALLTYP:
-                    self.lpoints_blc = WallPoints()
+                    self.lpoints_blc = BoundPoints()
                     self.lpoints_blc.add_section(data[0] - dys * np.sin(data[5]), data[1] - dys * np.cos(data[5]))
 
             elif mode == 'simulation':
                 self.upoints_blc = copy.deepcopy(self.upoints)
                 xx_blc = data[0] + dys * np.sin(data[5])
                 yy_blc = data[1] - dys * np.cos(data[5])
-                self.upoints = WallPoints()
+                self.upoints = BoundPoints()
                 self.upoints.add_section(xx_blc, yy_blc)            
 
 
@@ -489,10 +489,10 @@ class NOZZLE():
             self.delta = [deltaU / DEG, deltaL / DEG]
             # print(self.delta)
             
-            upperwall = WallPoints()
+            upperwall = BoundPoints()
             upperwall.add_section(xx=rup * np.sin(np.linspace(0., deltaU, narc)), func=lambda x:  0.5 + rup - (rup**2 - x**2)**0.5)
 
-            lowerwall = WallPoints()
+            lowerwall = BoundPoints()
             lowerwall.add_section(xx=rlo * np.sin(np.linspace(0., deltaL, narc)), func=lambda x: -0.5 - rlo + (rlo**2 - x**2)**0.5)
             
             self.kernel.clear()
@@ -582,11 +582,11 @@ class NOZZLE():
             y = yt * (1. - (1. - (yt / yi)**2) * (((1 - x**2)**2) / ((1 + 1./3. * x**2)**3)))**-0.5
             x_dim = (x - 1.) * L
 
-        self.convergence.upoints = WallPoints()
+        self.convergence.upoints = BoundPoints()
         self.convergence.upoints.add_section(xx=x_dim, yy=y)
 
         if self.method in ['idealAsym']:
-            self.convergence.lpoints = WallPoints()
+            self.convergence.lpoints = BoundPoints()
             self.convergence.lpoints.add_section(xx=x_dim, yy=-y)            
         
     def plot_contour(self, write_to_file: str = None):
@@ -623,8 +623,8 @@ class NOZZLE():
             zone.boundary_layer_correction(x0, 'edenfield', 'design', t0=self.tt, tw=None)
         
         # shift the convergence section
-        self.convergence.upoints_blc = WallPoints()
-        self.convergence.lpoints_blc = WallPoints()
+        self.convergence.upoints_blc = BoundPoints()
+        self.convergence.lpoints_blc = BoundPoints()
         xx_bls = self.convergence.upoints.xx
         yy_bls = self.convergence.upoints.yy + (self.kernel.upoints_blc.yy[0] - self.convergence.upoints.yy[-1]) * (xx_bls - xx_bls[0]) / (xx_bls[-1] - xx_bls[0])
         self.convergence.upoints_blc.add_section(xx=xx_bls, yy=yy_bls)

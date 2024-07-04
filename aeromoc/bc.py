@@ -12,20 +12,20 @@ def finite_diff(_xx: np.ndarray, _yy: np.ndarray):
     
     return _dydx
 
-class WallPoints():
+class BoundPoints():
 
     '''
-    `WallPoints` is a class for 2-D boundary conditions. Tt describes a line in 2-D plane by discrete 
+    `BoundPoints` is a class for 2-D boundary conditions. Tt describes a line in 2-D plane by discrete 
     points. These points are saved in `np.array` called `self.xx` and `self.yy`, the steepness (dydx)
     is also stored.
 
-    The wall is constructed by using `add_section`
+    The boundary is constructed by using `add_section`
 
-    >>>     wall = WallPoints()
+    >>>     wall = BoundPoints()
     >>>     xx = np.linspace(0, 5, 9)
     >>>     wall.add_section(xx, lambda x: -t * x)
 
-    The `WallPoints` class is wrapped as an iterator. The coordinate value can be obtained by index and
+    The `BoundPoints` class is wrapped as an iterator. The coordinate value can be obtained by index and
     iteration:
 
     
@@ -33,7 +33,7 @@ class WallPoints():
     >>>     x, y, dydx = wall[10]
 
     #### iteration
-    When used by iteration, an utils.EndofwallError will be raised when reaches the end of wall.
+    When used by iteration, an StopIteration will be raised when reaches the end of wall.
 
     >>>     try:
     >>>         x, y, dydx = next(wall)

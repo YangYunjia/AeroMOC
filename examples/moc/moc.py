@@ -1,6 +1,6 @@
 
 from aeromoc.moc import MOC2D
-from aeromoc.bc import WallPoints
+from aeromoc.bc import BoundPoints
 
 import numpy as np
 import math
@@ -13,14 +13,14 @@ if __name__ == '__main__':
 
     kttau = 20.0
     kttal = 12.0
-    upperwall = WallPoints()
+    upperwall = BoundPoints()
     # upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * ktta, 15)), lambda x: -4. + (6.**2 - x**2)**0.5)
     # upperwall.add_section(np.linspace(0, 5, 12), lambda x: -math.tan(math.pi / 180. * ktta) * x)
     upperwall.add_section(6 * np.sin(np.linspace(0., math.pi / 180. * kttau, 15)), lambda x: 8. - (6.**2 - x**2)**0.5)
     upperwall.add_section(np.linspace(0, 5, 16), lambda x: math.tan(math.pi / 180. * kttau) * x)
     # upperwall.plot()
 
-    lowerwall = WallPoints()
+    lowerwall = BoundPoints()
     lowerwall.add_section(2 * np.sin(np.linspace(0., math.pi / 180. * kttal, 15)), lambda x: -4. + (2.**2 - x**2)**0.5)
     lowerwall.add_section(np.linspace(0, 5, 9), lambda x: -math.tan(math.pi / 180. * kttal) * x)
     
