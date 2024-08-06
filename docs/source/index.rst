@@ -25,16 +25,19 @@ The program is initially developed by Yunjia Yang (yyj980401@126.com). It is als
 
 The program is open to further development. Please follow the instruction to fork and raise pull request.
 
+Contents
+==================
+
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Getting start
 
    simpleguide
    tutorials
 
-Indices and tables
-==================
+.. toctree::
+   :maxdepth: 2
+   :caption: Theory
 
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+   methodofchar
+   nozzledesign

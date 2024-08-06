@@ -20,3 +20,7 @@ The program is initially developed by Yunjia Yang (yyj980401@126.com). It is als
 - (Spring, 2023) Ziheng Xuzhong (许钟子珩), xzzh22@mails.tsinghua.edu.cn, Add boundary layer correction
 
 The program is open to further development. Please follow the instruction to fork and raise pull request.
+
+# Docs
+
+Please find the docs [here](https://aeromoc.readthedocs.io/en/latest/)
