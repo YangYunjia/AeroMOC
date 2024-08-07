@@ -108,7 +108,7 @@ An example python file to run MOC is provided in `/examples/nozzle`. The current
 
     The solved nozzle field is like in the figure below:
 
-    ![Alt text](./_static/images/simpleguide/moc_output.png)
+    ![Alt text](_static/images/simpleguide/moc_output.png)
 
 4. Apply boundary
 
@@ -140,4 +140,4 @@ An example python file to run MOC is provided in `/examples/nozzle`. The current
 
     The final plot should be:
 
-    ![Alt text](./_static/images/simpleguide/nozzle_example_geometry.png)
+    ![Alt text](_static/images/simpleguide/nozzle_example_geometry.png)
