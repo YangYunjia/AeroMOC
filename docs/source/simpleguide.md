@@ -79,6 +79,65 @@ An example python file to run MOC is provided in `/examples/nozzle`. The current
 
 1. Import the class for designing nozzle
 
-```python
-from aeromoc.moc import NozzleDesign
-```
+    ```python
+    from aeromoc.nozzle import NozzleDesign
+    ```
+
+2. Define the problem
+
+    Currently, only ideal asymmetric nozzle is available. The nozzle design operating condition are: 
+    - inlet total pressure 200kPa
+    - inlet total temperature 1393K
+    - ambient pressure 5kPa
+
+    The nozzle design parameters for ideal asymmetric nozzle are:
+    - asymmetric parameter 0.7, which is defined by $\alpha = \delta_L / \delta_U$
+    - radius for upper and lower throat upstream contour 3m
+
+    (The inlet height is default to be 1m)
+
+    ```python
+    nz = NozzleDesign('idealAsym', pt=200000, tt=1393, patm=5000, asym=0.7, rup=3., rlow=3.)
+    ```
+
+3. Solve the design problem
+
+    ```python
+    nz.solve()
+    ```
+
+    The solved nozzle field is like in the figure below:
+
+    ![Alt text](./_figures/simpleguide/moc_output.png)
+
+4. Apply boundary
+
+    To calculate the thickness of boundary layer, the geometry of the convergence section is required. Note that the flow field in convergence section is subsonic, so the field are not solved.
+
+    ```python
+    nz.gen_conv_section(L=2., yt=0.5, yi=1.)
+    ```
+
+    Then the boundary layer thickness is calculated at each contour point, and the corrected contour points are stored.
+
+    ```python
+    nz.apply_blc()
+    ```
+
+5. Write contour values
+
+    The contour geometry and contour values are written to `contour_geometry.dat` and `contour_values.dat`, respectively. The files are in `Tecplot` format.
+
+    ```python
+    nz.write_contour()
+    ```
+
+6. Plot the contour geometries
+
+    ```python
+    nz.plot_contour()
+    ```
+
+    The final plot should be:
+
+    ![Alt text](./_figures/simpleguide/nozzle_example_geometry.png)
