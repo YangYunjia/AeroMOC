@@ -54,7 +54,7 @@ import numpy as np
     moc.calc_initial_line(n, mode='total', p=2015., t=2726., urUp=9.)
     ```
 
-    For details in boundary conditions, please see [Initial Methods](./tutorials.md#initial-methods).
+    For details in inital methods, please see [Initial Methods](./tutorials.md#initial-methods).
 
 5. Solve for field
 
@@ -71,7 +71,7 @@ import numpy as np
     moc.plot_wall(side='u', var=['p', 'ma', 't'], write_to_file='upper.dat')
     ```
 
-    For details in boundary conditions, please see [Post-process](./tutorials.md#post-process).
+    For details in postprocess, please see [Post-process](./tutorials.md#post-process).
 
 ## Run nozzle design code
 
